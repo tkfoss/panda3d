@@ -54,6 +54,7 @@ RmlRegion(GraphicsOutput *window, const LVecBase4 &dr_dimensions,
       << "' at (" << dimensions.x << ", " << dimensions.y << ")\n";
   }
 
+  _interface.init(window);
   _context = Rml::CreateContext(context_name, dimensions, &_interface);
   nassertv(_context != nullptr);
 
