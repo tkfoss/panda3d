@@ -12,6 +12,7 @@
  */
 
 #include "rmlRegion.h"
+#include "rmlContext.h"
 #include "graphicsOutput.h"
 #include "orthographicLens.h"
 #include "pStatTimer.h"
@@ -25,6 +26,14 @@
 #endif
 
 TypeHandle RmlRegion::_type_handle;
+
+PT(RmlContext) RmlRegion::
+get_context() const {
+  if (_context == nullptr) {
+    return nullptr;
+  }
+  return new RmlContext(_context);
+}
 
 /**
  * In RmlUi v6 each context has its own render interface, passed at creation

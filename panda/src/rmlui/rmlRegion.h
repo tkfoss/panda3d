@@ -17,6 +17,7 @@
 #include "config_rmlui.h"
 #include "displayRegion.h"
 #include "rmlInputHandler.h"
+#include "rmlContext.h"
 
 #ifndef CPPPARSER
 #include "rmlRenderInterface.h"
@@ -57,6 +58,9 @@ PUBLISHED:
   INLINE static RmlRegion *make(const std::string &context_name,
                                 GraphicsOutput *window,
                                 const LVecBase4 &dimensions);
+
+  PT(RmlContext) get_context() const;
+  MAKE_PROPERTY(context, get_context);
 
   INLINE void set_input_handler(RmlInputHandler *handler);
   INLINE RmlInputHandler *get_input_handler() const;

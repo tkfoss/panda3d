@@ -10,6 +10,9 @@
  */
 
 #include "config_rmlui.cxx"
+#include "rmlContext.cxx"
+#include "rmlDocument.cxx"
+#include "rmlElement.cxx"
 #include "rmlFileInterface.cxx"
 #include "rmlInputHandler.cxx"
 #include "rmlRegion.cxx"

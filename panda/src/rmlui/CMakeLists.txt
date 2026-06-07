@@ -4,6 +4,9 @@ endif()
 
 set(P3RMLUI_HEADERS
   config_rmlui.h
+  rmlContext.h
+  rmlDocument.h
+  rmlElement.h
   rmlFileInterface.h
   rmlInputHandler.h
   rmlRegion.I rmlRegion.h
@@ -13,6 +16,9 @@ set(P3RMLUI_HEADERS
 
 set(P3RMLUI_SOURCES
   config_rmlui.cxx
+  rmlContext.cxx
+  rmlDocument.cxx
+  rmlElement.cxx
   rmlFileInterface.cxx
   rmlInputHandler.cxx
   rmlRegion.cxx
@@ -27,7 +33,7 @@ target_link_libraries(p3rmlui panda RmlUi::RmlUi)
 # Only interrogate the files with PUBLISHED: annotations; the interface
 # adapter files (rmlFileInterface, rmlRenderInterface, rmlSystemInterface)
 # contain Rml:: types that the CPPPARSER cannot resolve.
-target_interrogate(p3rmlui config_rmlui.cxx rmlInputHandler.cxx rmlRegion.cxx)
+target_interrogate(p3rmlui config_rmlui.cxx rmlInputHandler.cxx rmlRegion.cxx rmlContext.cxx rmlDocument.cxx rmlElement.cxx)
 
 if(HAVE_RMLUI_DEBUGGER)
   target_compile_definitions(p3rmlui PRIVATE HAVE_RMLUI_DEBUGGER)
