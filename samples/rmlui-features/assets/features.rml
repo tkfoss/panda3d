@@ -41,6 +41,11 @@
                 and full 3D with <code>perspective:</code>. Combined with
                 <code>transition:</code> on :hover and <code>@keyframes</code>
                 for continuous animations.</td></tr>
+            <tr><td class="tab-name">Filters</td>
+                <td>CSS <code>filter:</code> — blur, grayscale, sepia, brightness, contrast,
+                invert, hue-rotate, saturate, opacity, drop-shadow. Each filter triggers
+                the RmlUi layer stack (<code>PushLayer</code> / <code>CompositeLayers</code> /
+                <code>PopLayer</code>) and is rendered via a Panda3D offscreen buffer + GLSL shader.</td></tr>
             <tr><td class="tab-name">Forms</td>
                 <td>All built-in input types. The <strong>Submit</strong> button fires a
                 Panda3D event via <code>RmlElement.add_event_listener()</code>.
@@ -355,6 +360,55 @@
 
     <div id="form-output">
         <p style="color: #888;">Form output appears here after submit.</p>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Filters</tab>
+<panel id="filters">
+    <h1 class="panel-title">CSS Filters (Layer Stack)</h1>
+    <p>Each box below applies a <code>filter:</code> CSS property.
+       Filters are implemented via the RmlUi layer stack —
+       <code>PushLayer</code>, <code>CompositeLayers</code>, <code>PopLayer</code>
+       — and rendered through Panda3D offscreen buffers and GLSL shaders.</p>
+
+    <div class="filter-row">
+        <span class="filter-label">blur(4dp)</span>
+        <div class="filter-target f-blur">Blur</div>
+
+        <span class="filter-label">grayscale(1)</span>
+        <div class="filter-target f-grayscale">Gray</div>
+
+        <span class="filter-label">sepia(0.9)</span>
+        <div class="filter-target f-sepia">Sepia</div>
+
+        <span class="filter-label">brightness(1.8)</span>
+        <div class="filter-target f-brightness">Bright</div>
+    </div>
+
+    <div class="filter-row">
+        <span class="filter-label">contrast(2.0)</span>
+        <div class="filter-target f-contrast">Contrast</div>
+
+        <span class="filter-label">invert(1)</span>
+        <div class="filter-target f-invert">Invert</div>
+
+        <span class="filter-label">hue-rotate(60deg)</span>
+        <div class="filter-target f-hue60">Hue +60</div>
+
+        <span class="filter-label">hue-rotate(180deg)</span>
+        <div class="filter-target f-hue180">Hue 180</div>
+    </div>
+
+    <div class="filter-row">
+        <span class="filter-label">saturate(3.0)</span>
+        <div class="filter-target f-saturate">Saturate</div>
+
+        <span class="filter-label">opacity(0.4)</span>
+        <div class="filter-target f-opacity">Opacity</div>
+
+        <span class="filter-label">drop-shadow(3dp 4dp 2dp)</span>
+        <div class="filter-target f-shadow">Shadow</div>
     </div>
 </panel>
 

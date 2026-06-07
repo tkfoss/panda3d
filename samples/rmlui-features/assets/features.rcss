@@ -5,13 +5,13 @@ body {
     font-weight: normal;
     font-style: normal;
     font-size: 15dp;
-    color: #ddd;
+    color: #eee;
 }
 
 body.window {
     left: 30dp;
     right: 30dp;
-    top: 20dp;
+    top: 60dp;
     bottom: 20dp;
     min-width: 900dp;
     max-width: none;
@@ -94,9 +94,9 @@ p { margin: 4dp 0 8dp 0; }
     display: inline-block;
     vertical-align: top;
     width: 48%;
-    background-color: rgba(0,0,0,0.35);
+    background-color: rgba(0,0,0,0.6);
     border-width: 1dp;
-    border-color: rgba(255,255,255,0.1);
+    border-color: rgba(255,255,255,0.15);
     padding: 14dp 16dp;
     margin-right: 2%;
     box-sizing: border-box;
@@ -402,6 +402,48 @@ textarea    { display: block; margin: 4dp 0; width: 90%; }
     color: #bbb;
     white-space: pre-wrap;
 }
+
+/* ── CSS Filters ──────────────────────────────────────────────────── */
+
+.filter-target {
+    display: inline-block;
+    width: 120dp;
+    height: 80dp;
+    line-height: 80dp;
+    text-align: center;
+    font-size: 14dp;
+    font-weight: bold;
+    background-color: rgba(60,120,200,0.8);
+    border-width: 2dp;
+    border-color: rgba(150,200,255,0.5);
+    margin: 6dp;
+    color: #fff;
+}
+
+.filter-label {
+    display: block;
+    font-size: 11dp;
+    color: #aaa;
+    text-align: center;
+    margin-bottom: 4dp;
+}
+
+.filter-row {
+    display: block;
+    margin-bottom: 14dp;
+}
+
+.f-blur        { filter: blur(4dp); }
+.f-grayscale   { filter: grayscale(1); }
+.f-sepia       { filter: sepia(0.9); }
+.f-brightness  { filter: brightness(1.8); }
+.f-contrast    { filter: contrast(2.0); }
+.f-invert      { filter: invert(1); }
+.f-hue60       { filter: hue-rotate(60deg); }
+.f-hue180      { filter: hue-rotate(180deg); }
+.f-saturate    { filter: saturate(3.0); }
+.f-opacity     { filter: opacity(0.4); }
+.f-shadow      { filter: drop-shadow(#111 3dp 4dp 2dp); }
 
 /* ── Live / Python ────────────────────────────────────────────────── */
 

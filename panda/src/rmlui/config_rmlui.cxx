@@ -14,6 +14,7 @@
 #include "config_rmlui.h"
 #include "rmlInputHandler.h"
 #include "rmlRegion.h"
+#include "configVariableBool.h"
 
 #ifndef CPPPARSER
 #include "rmlFileInterface.h"
@@ -30,6 +31,12 @@
 
 Configure(config_rmlui);
 NotifyCategoryDef(rmlui, "");
+
+ConfigVariableBool rmlui_layer_debug
+("rmlui-layer-debug", false,
+ PRC_DESC("Set true to emit a debug line for every RmlUi layer flush and "
+          "filter blit (FBO name, draw count, filter chain).  Requires "
+          "notify-level-rmlui debug (or spam) to be set in the same PRC."));
 
 ConfigureFn(config_rmlui) {
   init_librmlui();

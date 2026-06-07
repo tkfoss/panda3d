@@ -33,6 +33,10 @@ loadPrcFileData("", f"model-path {ASSETS}")
 loadPrcFileData("", "win-size 1280 800")
 loadPrcFileData("", "window-title RmlUi Feature Showcase")
 
+# Debug: uncomment to enable RmlUi layer/filter diagnostics.
+# Also add "notify-level-rmlui debug" to see the log output.
+# loadPrcFileData("", "rmlui-layer-debug #t\nnotify-level-rmlui debug")
+
 
 class FeatureDemo(ShowBase):
     def __init__(self):
