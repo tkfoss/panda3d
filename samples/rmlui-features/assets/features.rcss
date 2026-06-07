@@ -1,0 +1,212 @@
+body {
+    font-family: LatoLatin;
+    font-weight: normal;
+    font-style: normal;
+    font-size: 15dp;
+    color: #ddd;
+    background-color: #1a1c22;
+    margin: 0;
+    padding: 0;
+}
+
+/* ── Layout ─────────────────────────────────────────────────── */
+
+#page {
+    width: 100%;
+    height: 100%;
+}
+
+h1 {
+    font-size: 28dp;
+    color: #ffcc44;
+    margin: 0 0 4dp 0;
+}
+
+h2 {
+    font-size: 18dp;
+    color: #aaddff;
+    margin: 0 0 8dp 0;
+}
+
+.section {
+    display: inline-block;
+    vertical-align: top;
+    width: 370dp;
+    background-color: rgba(0,0,0,0.45);
+    border-width: 1dp;
+    border-color: rgba(255,255,255,0.12);
+    padding: 18dp 20dp;
+    margin: 10dp;
+}
+
+p { margin: 4dp 0; }
+
+/* ── Header ─────────────────────────────────────────────────── */
+
+#header {
+    background-color: rgba(0,0,0,0.6);
+    border-width: 0 0 1dp 0;
+    border-color: #445;
+    padding: 12dp 20dp;
+    margin-bottom: 10dp;
+}
+
+#header h1 { display: inline-block; margin: 0; }
+#fps-label  { display: inline-block; float: right; font-size: 13dp; color: #888; margin-top: 8dp; }
+
+/* ── Font effects ────────────────────────────────────────────── */
+
+.fx-row {
+    display: block;
+    font-size: 26dp;
+    margin: 6dp 0;
+}
+.fx-normal  { color: #ddd; }
+.fx-glow    { color: #b33; font-effect: glow(3dp #ed5); }
+.fx-outline { color: #ddd; font-effect: outline(2dp #4af); }
+.fx-shadow  { color: #fff; font-weight: bold; font-effect: shadow(2dp 2dp #222); }
+.fx-blur    { color: #aaf; font-effect: blur(4dp #66f); }
+
+/* ── CSS Animations ──────────────────────────────────────────── */
+
+@keyframes cube-spin {
+    from { transform: rotate3d(1, -0.7, 0.3, 0deg); }
+    to   { transform: rotate3d(1, -0.7, 0.3, 360deg); }
+}
+
+.cube-wrap {
+    width: 130dp;
+    height: 130dp;
+    perspective: 400dp;
+    margin: 16dp auto;
+}
+
+.cube {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    animation: 3s cube-spin infinite linear;
+}
+
+.face {
+    display: block;
+    position: absolute;
+    left: 30dp; top: 30dp;
+    width: 70dp;
+    height: 70dp;
+    line-height: 70dp;
+    font-size: 32dp;
+    color: white;
+    text-align: center;
+    font-weight: bold;
+}
+.face.front  { background: rgba(0,0,0,160);       transform: translateZ(35dp); }
+.face.back   { background: rgba(0,200,0,220);  color: #111; transform: rotateY(180deg) translateZ(35dp); }
+.face.right  { background: rgba(180,0,0,200);     transform: rotateY(90deg) translateZ(35dp); }
+.face.left   { background: rgba(0,0,180,200);     transform: rotateY(-90deg) translateZ(35dp); }
+.face.top    { background: rgba(180,180,0,200);   transform: rotateX(90deg) translateZ(35dp); }
+.face.bottom { background: rgba(180,0,180,200);   transform: rotateX(-90deg) translateZ(35dp); }
+
+/* CSS transitions on hover */
+.transition-box {
+    width: 100%;
+    height: 60dp;
+    background-color: rgba(40,80,120,0.7);
+    border-width: 1dp;
+    border-color: #4af6;
+    margin: 8dp 0;
+    position: relative;
+    overflow: hidden;
+}
+
+.alien-drift {
+    position: absolute;
+    top: -50dp;
+    left: 50%;
+    margin-left: -25dp;
+    transition: top 0.5s back-out, opacity 0.4s, image-color 0.4s;
+    opacity: 0;
+    image-color: #fff;
+}
+.transition-box:hover .alien-drift {
+    top: 5dp;
+    opacity: 1;
+    image-color: #f84;
+}
+
+/* ── Decorators / Images ─────────────────────────────────────── */
+
+.sprite-row {
+    margin: 10dp 0;
+}
+.sprite-row img {
+    margin-right: 12dp;
+    vertical-align: middle;
+}
+.gradient-h {
+    width: 100%;
+    height: 30dp;
+    decorator: horizontal-gradient(#1a3a6a #3a8ac8);
+    margin: 6dp 0;
+}
+.gradient-v {
+    width: 100%;
+    height: 30dp;
+    decorator: vertical-gradient(#4a1a1a #c83a3a);
+    margin: 6dp 0;
+}
+
+/* ── Live data ───────────────────────────────────────────────── */
+
+#progress-bar-outer {
+    width: 100%;
+    height: 18dp;
+    background-color: rgba(255,255,255,0.1);
+    border-width: 1dp;
+    border-color: #446;
+    margin: 6dp 0;
+}
+#progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    background-color: #4af;
+}
+#color-swatch {
+    width: 100%;
+    height: 40dp;
+    background-color: #4af;
+    margin: 8dp 0;
+    transition: background-color 0.3s;
+}
+
+/* ── Forms ───────────────────────────────────────────────────── */
+
+form { display: block; }
+form h2 { margin-top: 10dp; }
+
+label {
+    display: block;
+    margin: 3dp 0;
+    cursor: pointer;
+}
+
+input.text {
+    width: 80%;
+    margin: 4dp 0;
+}
+
+#submit-btn {
+    margin-top: 10dp;
+}
+
+#form-output {
+    font-size: 12dp;
+    color: #aaa;
+    background-color: rgba(0,0,0,0.4);
+    border-width: 1dp;
+    border-color: #444;
+    padding: 6dp 8dp;
+    margin-top: 8dp;
+    min-height: 40dp;
+    white-space: pre-wrap;
+}

@@ -1,0 +1,116 @@
+<rml>
+<head>
+    <title>RmlUi Feature Showcase</title>
+    <link type="text/rcss" href="invader.rcss"/>
+    <link type="text/rcss" href="features.rcss"/>
+</head>
+<body>
+<div id="page">
+
+    <!-- Header -->
+    <div id="header">
+        <h1>RmlUi Feature Showcase</h1>
+        <span id="fps-label">FPS: <span id="fps">--</span></span>
+    </div>
+
+    <!-- ── Row 1 ─────────────────────────────────────────────── -->
+
+    <!-- Font Effects -->
+    <div class="section">
+        <h2>Font Effects</h2>
+        <span class="fx-row fx-normal">Plain text</span>
+        <span class="fx-row fx-glow">Glow effect</span>
+        <span class="fx-row fx-outline">Outline effect</span>
+        <span class="fx-row fx-shadow">Drop shadow</span>
+        <span class="fx-row fx-blur">Blur effect</span>
+    </div>
+
+    <!-- CSS Animations -->
+    <div class="section">
+        <h2>CSS Animations &amp; Transitions</h2>
+        <p>3D cube rotated entirely in RCSS @keyframes:</p>
+        <div class="cube-wrap">
+            <div class="cube">
+                <div class="face back">6</div>
+                <div class="face top">5</div>
+                <div class="face left">4</div>
+                <div class="face bottom">3</div>
+                <div class="face right">2</div>
+                <div class="face front">1</div>
+            </div>
+        </div>
+        <p>Hover for CSS transition (back-out easing):</p>
+        <div class="transition-box">
+            <img class="alien-drift" src="high_scores_alien_2.tga"/>
+        </div>
+        <div class="transition-box">
+            <img class="alien-drift" src="high_scores_defender.tga"/>
+        </div>
+    </div>
+
+    <!-- Decorators / Images -->
+    <div class="section">
+        <h2>Decorators &amp; Sprites</h2>
+        <p>Gradient decorators:</p>
+        <div class="gradient-h"/>
+        <div class="gradient-v"/>
+        <p>Sprites from the invader spritesheet:</p>
+        <div class="sprite-row">
+            <img sprite="icon-invader"/>
+            <img sprite="icon-game"/>
+            <img sprite="icon-hiscore"/>
+            <img sprite="icon-waves"/>
+            <img sprite="icon-flag"/>
+        </div>
+        <p>Image elements with tinting:</p>
+        <div class="sprite-row">
+            <img src="high_scores_alien_1.tga" style="image-color: #f88;"/>
+            <img src="high_scores_alien_2.tga" style="image-color: #8f8;"/>
+            <img src="high_scores_alien_3.tga" style="image-color: #88f;"/>
+        </div>
+        <p>Tiled-box window background:</p>
+        <div style="height: 60dp; decorator: tiled-box(window-tl, window-t, window-tr, window-l, window-c, window-r, window-bl, window-b, window-br);"/>
+    </div>
+
+    <!-- ── Row 2 ─────────────────────────────────────────────── -->
+
+    <!-- Live data driven from Python -->
+    <div class="section">
+        <h2>Python-Driven Live Data</h2>
+        <p>These values update every frame from Python:</p>
+        <p>Frame: <span id="frame-count">0</span></p>
+        <p>Sin wave: <span id="sin-val">0.00</span></p>
+        <p>Progress bar (sin wave):</p>
+        <div id="progress-bar-outer">
+            <div id="progress-bar-fill"/>
+        </div>
+        <p>Color swatch (hue cycles):</p>
+        <div id="color-swatch"/>
+        <p style="margin-top: 12dp;">Click button to send Panda3D event:</p>
+        <button id="ping-btn">Ping!</button>
+        <p>Pings received: <span id="ping-count">0</span></p>
+    </div>
+
+    <!-- Forms -->
+    <div class="section">
+        <h2>Forms</h2>
+        <form id="demo-form">
+            <h2>Your name</h2>
+            <input class="text" type="text" name="name" placeholder="Enter name..."/>
+            <h2>Favorite alien</h2>
+            <label><input type="radio" name="alien" value="alien1" checked/> Alien 1</label>
+            <label><input type="radio" name="alien" value="alien2"/> Alien 2</label>
+            <label><input type="radio" name="alien" value="alien3"/> Alien 3</label>
+            <h2>Options</h2>
+            <label><input type="checkbox" name="glow" value="on" checked/> Enable glow</label>
+            <label><input type="checkbox" name="spin" value="on" checked/> Enable spin</label>
+            <h2>Speed (<span id="speed-val">50</span>%)</h2>
+            <input type="range" name="speed" min="0" max="100" step="1" value="50" id="speed-slider"/>
+            <button id="submit-btn" type="submit">Submit</button>
+        </form>
+        <div id="form-output">Form output will appear here.</div>
+    </div>
+
+</div>
+</body>
+</rml>
