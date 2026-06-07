@@ -746,6 +746,16 @@ package_option(ODE
 
 package_status(ODE "Open Dynamics Engine")
 
+# RmlUi
+find_package(RmlUi QUIET)
+
+package_option(RmlUi
+  "Enable this option to support RmlUi HTML/CSS UI rendering."
+  IMPORTED_AS RmlUi::RmlUi)
+
+package_status(RmlUi "RmlUi")
+
+
 
 #
 # ------------ SpeedTree ------------
