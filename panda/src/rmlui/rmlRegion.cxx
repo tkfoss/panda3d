@@ -110,7 +110,7 @@ do_cull(CullHandler *cull_handler, SceneSetup *scene_setup,
   trav->set_scene(scene_setup, gsg, get_incomplete_render());
   trav->set_view_frustum(nullptr);
 
-  _interface.render(_context, trav);
+  _interface.render(_context, trav, gsg, current_thread);
 
   trav->end_traverse();
 }

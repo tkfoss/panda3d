@@ -19,16 +19,16 @@
 #include "cullHandler.h"
 #include "depthTestAttrib.h"
 #include "depthWriteAttrib.h"
+#include "displayRegion.h"
 #include "frameBufferProperties.h"
 #include "geomTriangles.h"
 #include "geomVertexArrayData.h"
 #include "geomVertexData.h"
 #include "geomVertexWriter.h"
-#include "graphicsOutput.h"
 #include "internalName.h"
-#include "pta_float.h"
 #include "pta_LMatrix4.h"
 #include "pta_LVecBase4.h"
+#include "pta_float.h"
 #include "scissorAttrib.h"
 #include "shader.h"
 #include "shaderAttrib.h"
@@ -41,15 +41,20 @@
 #include <RmlUi/Core/DecorationTypes.h>
 #include <RmlUi/Core/Dictionary.h>
 #include <RmlUi/Core/SystemInterface.h>
+#include <RmlUi/Core/Core.h>
 #endif
 
-// ---------------------------------------------------------------------------
-// Embedded GLSL shader sources  (SPIR-V path: GLSL → glslang → SPIR-V)
-// All shaders use explicit layout(binding=N) so they survive SPIRV-Cross.
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Embedded GLSL shader sources
+//
+// All shaders target GLSL 330 with explicit layout(binding=N) so they compile
+// correctly through glslang → SPIR-V and survive SPIRV-Cross on both the GL
+// and Vulkan backends.  No raw GL calls anywhere.
+// ===========================================================================
 
-// Passthrough: blit source texture to destination, optionally multiplied by
-// a scalar blend factor (used for CSS opacity filter).
+// ---------------------------------------------------------------------------
+// Passthrough — blit one texture to the current FBO, optionally scaled
+// ---------------------------------------------------------------------------
 static const char *s_vert_passthrough = R"GLSL(
 #version 330
 layout(location=0) in vec2 p3d_Vertex;
@@ -65,20 +70,21 @@ static const char *s_frag_passthrough = R"GLSL(
 #version 330
 layout(binding=0) uniform sampler2D p3d_Texture0;
 uniform float u_blend_factor;
-in vec2 v_uv;
+in  vec2 v_uv;
 out vec4 o_color;
 void main() {
     o_color = texture(p3d_Texture0, v_uv) * u_blend_factor;
 }
 )GLSL";
 
-// Color-matrix: applies a 4x4 matrix to rgba.  Used for brightness,
-// contrast, grayscale, sepia, hue-rotate, saturate, invert filters.
+// ---------------------------------------------------------------------------
+// Color matrix — brightness / contrast / grayscale / sepia / hue-rotate / etc.
+// ---------------------------------------------------------------------------
 static const char *s_frag_color_matrix = R"GLSL(
 #version 330
 layout(binding=0) uniform sampler2D p3d_Texture0;
 uniform mat4 u_color_matrix;
-in vec2 v_uv;
+in  vec2 v_uv;
 out vec4 o_color;
 void main() {
     vec4 c = texture(p3d_Texture0, v_uv);
@@ -86,58 +92,57 @@ void main() {
 }
 )GLSL";
 
-// Blend-mask: multiply source rgb by mask alpha (CSS mask-image).
+// ---------------------------------------------------------------------------
+// Blend mask — multiply source rgb by mask alpha  (CSS mask-image)
+// ---------------------------------------------------------------------------
 static const char *s_frag_blend_mask = R"GLSL(
 #version 330
 layout(binding=0) uniform sampler2D p3d_Texture0;
 layout(binding=1) uniform sampler2D u_mask_tex;
-in vec2 v_uv;
+in  vec2 v_uv;
 out vec4 o_color;
 void main() {
-    vec4 c    = texture(p3d_Texture0, v_uv);
-    float ma  = texture(u_mask_tex, v_uv).a;
-    o_color   = c * ma;
+    vec4 c  = texture(p3d_Texture0, v_uv);
+    float m = texture(u_mask_tex, v_uv).a;
+    o_color = c * m;
 }
 )GLSL";
 
-// Drop-shadow: samples the source alpha channel offset by u_offset, tinted
-// by u_shadow_color, then additively composited with the original.
+// ---------------------------------------------------------------------------
+// Drop shadow — blurred alpha tinted by shadow color, composited with original
+// ---------------------------------------------------------------------------
 static const char *s_frag_drop_shadow = R"GLSL(
 #version 330
 layout(binding=0) uniform sampler2D p3d_Texture0;
 uniform vec4  u_shadow_color;
 uniform vec2  u_offset;
 uniform vec2  u_inv_size;
-uniform vec2  u_uv_min;
-uniform vec2  u_uv_max;
-in vec2 v_uv;
+in  vec2 v_uv;
 out vec4 o_color;
 void main() {
-    vec2 shadow_uv = v_uv + u_offset * u_inv_size;
-    vec2 in_region = step(u_uv_min, shadow_uv) * step(shadow_uv, u_uv_max);
-    float a = texture(p3d_Texture0, shadow_uv).a * in_region.x * in_region.y;
-    o_color = u_shadow_color * a;
-    o_color += texture(p3d_Texture0, v_uv);
+    vec2 suv = v_uv + u_offset * u_inv_size;
+    float a  = texture(p3d_Texture0, suv).a;
+    o_color  = u_shadow_color * a + texture(p3d_Texture0, v_uv);
 }
 )GLSL";
 
-// Separable Gaussian blur (single-axis pass).  u_axis selects H or V.
-// Kernel half-width 7 taps, weights computed on CPU and passed as uniform.
-#define BLUR_TAPS 7
-#define BLUR_WEIGHTS ((BLUR_TAPS + 1) / 2)
+// ---------------------------------------------------------------------------
+// Separable Gaussian blur (single axis per pass, 7 taps)
+// ---------------------------------------------------------------------------
+#define BLUR_TAPS    7
+#define BLUR_WEIGHTS 4   // ceil(BLUR_TAPS / 2)
 
 static const char *s_vert_blur = R"GLSL(
 #version 330
 layout(location=0) in vec2 p3d_Vertex;
 layout(location=4) in vec2 p3d_MultiTexCoord0;
 uniform vec2  u_axis;
-uniform float u_weights[4];
 uniform vec2  u_inv_size;
 out vec2 v_uv[7];
 void main() {
     for (int i = 0; i < 7; i++) {
-        float offset = float(i - 3);
-        v_uv[i] = p3d_MultiTexCoord0 + u_axis * offset * u_inv_size;
+        float d = float(i - 3);
+        v_uv[i] = p3d_MultiTexCoord0 + u_axis * d * u_inv_size;
     }
     gl_Position = vec4(p3d_Vertex, 0.0, 1.0);
 }
@@ -149,36 +154,36 @@ layout(binding=0) uniform sampler2D p3d_Texture0;
 uniform float u_weights[4];
 uniform vec2  u_uv_min;
 uniform vec2  u_uv_max;
-in vec2 v_uv[7];
+in  vec2 v_uv[7];
 out vec4 o_color;
 void main() {
     o_color = vec4(0.0);
     for (int i = 0; i < 7; i++) {
-        vec2 in_region = step(u_uv_min, v_uv[i]) * step(v_uv[i], u_uv_max);
-        int wi = abs(i - 3);
-        o_color += texture(p3d_Texture0, v_uv[i])
-                   * in_region.x * in_region.y * u_weights[wi];
+        vec2 in_r = step(u_uv_min, v_uv[i]) * step(v_uv[i], u_uv_max);
+        int  wi   = abs(i - 3);
+        o_color  += texture(p3d_Texture0, v_uv[i])
+                    * in_r.x * in_r.y * u_weights[wi];
     }
 }
 )GLSL";
 
-// Gradient decorator: linear/radial/conic with up to 16 color stops.
-#define MAX_STOPS 16
-
+// ---------------------------------------------------------------------------
+// Gradient decorator (linear / radial / conic, repeating variants, 16 stops)
+// ---------------------------------------------------------------------------
 static const char *s_vert_ui = R"GLSL(
 #version 330
 layout(location=0) in vec2 p3d_Vertex;
 layout(location=3) in vec4 p3d_Color;
 layout(location=4) in vec2 p3d_MultiTexCoord0;
-uniform vec2  u_translate;
-uniform mat4  u_transform;
+uniform vec2 u_translate;
+uniform mat4 u_transform;
 out vec2 v_uv;
 out vec4 v_color;
 void main() {
     v_uv    = p3d_MultiTexCoord0;
     v_color = p3d_Color;
-    vec2 pos = p3d_Vertex + u_translate;
-    gl_Position = u_transform * vec4(pos, 0.0, 1.0);
+    vec2 p  = p3d_Vertex + u_translate;
+    gl_Position = u_transform * vec4(p, 0.0, 1.0);
 }
 )GLSL";
 
@@ -198,8 +203,8 @@ uniform vec2  u_v;
 uniform vec4  u_stop_colors[MAX_STOPS];
 uniform float u_stop_positions[MAX_STOPS];
 uniform int   u_num_stops;
-in vec2 v_uv;
-in vec4 v_color;
+in  vec2 v_uv;
+in  vec4 v_color;
 out vec4 o_color;
 vec4 mix_stops(float t) {
     vec4 c = u_stop_colors[0];
@@ -229,25 +234,27 @@ void main() {
 }
 )GLSL";
 
-// "Creation" procedural shader (Shadertoy demo by Danilo Guanabara).
+// ---------------------------------------------------------------------------
+// Creation procedural shader (Danilo Guanabara / shadertoy)
+// ---------------------------------------------------------------------------
 static const char *s_frag_creation = R"GLSL(
 #version 330
 uniform float u_time;
 uniform vec2  u_dimensions;
-in vec2 v_uv;
-in vec4 v_color;
+in  vec2 v_uv;
+in  vec4 v_color;
 out vec4 o_color;
 void main() {
     float t = u_time;
     vec3 c;
     float l;
     for (int i = 0; i < 3; i++) {
-        vec2 p = v_uv;
+        vec2 p  = v_uv;
         vec2 uv = p;
         p -= 0.5;
         p.x *= u_dimensions.x / u_dimensions.y;
         float z = t + float(i) * 0.07;
-        l = length(p);
+        l  = length(p);
         uv += p / l * (sin(z) + 1.0) * abs(sin(l * 9.0 - z - z));
         c[i] = 0.01 / length(mod(uv, 1.0) - 0.5);
     }
@@ -255,93 +262,98 @@ void main() {
 }
 )GLSL";
 
-// ---------------------------------------------------------------------------
-// Helper: Gaussian kernel weights for a kernel of half-size BLUR_WEIGHTS
-// ---------------------------------------------------------------------------
-static void compute_blur_weights(float sigma, float weights[BLUR_WEIGHTS]) {
+// ===========================================================================
+// Internal helpers
+// ===========================================================================
+
+static void compute_blur_weights(float sigma, float out[BLUR_WEIGHTS]) {
   double sum = 0.0;
-  for (int i = 0; i < BLUR_WEIGHTS; i++) {
-    double x = (double)i;
-    weights[i] = (float)std::exp(-0.5 * x * x / (sigma * sigma));
-    sum += weights[i] * (i == 0 ? 1.0 : 2.0);
+  for (int i = 0; i < BLUR_WEIGHTS; ++i) {
+    out[i] = (float)std::exp(-0.5 * (double)(i * i) / (sigma * sigma));
+    sum += out[i] * (i == 0 ? 1.0 : 2.0);
   }
-  for (int i = 0; i < BLUR_WEIGHTS; i++) {
-    weights[i] = (float)(weights[i] / sum);
+  for (int i = 0; i < BLUR_WEIGHTS; ++i) {
+    out[i] = (float)(out[i] / sum);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper: make a fullscreen clip-space quad geom  (NDC -1..1, UV 0..1)
-// ---------------------------------------------------------------------------
+// Build a fullscreen NDC quad (positions -1..1, UVs 0..1).
 static CPT(Geom) make_fullscreen_quad() {
-  static const Rml::Vertex verts[4] = {
-    {{-1.f, -1.f}, {255,255,255,255}, {0.f, 0.f}},
-    {{ 1.f, -1.f}, {255,255,255,255}, {1.f, 0.f}},
-    {{ 1.f,  1.f}, {255,255,255,255}, {1.f, 1.f}},
-    {{-1.f,  1.f}, {255,255,255,255}, {0.f, 1.f}},
+  struct V { float x, y, u, v; };
+  static const V verts[4] = {
+    {-1.f,-1.f, 0.f, 0.f},
+    { 1.f,-1.f, 1.f, 0.f},
+    { 1.f, 1.f, 1.f, 1.f},
+    {-1.f, 1.f, 0.f, 1.f},
   };
   static const int idx[6] = {0,1,2, 0,2,3};
 
-  PT(GeomVertexData) vdata = new GeomVertexData(
+  PT(GeomVertexData) vd = new GeomVertexData(
     "fsq", GeomVertexFormat::get_v3c4t2(), GeomEnums::UH_static);
-  vdata->unclean_set_num_rows(4);
-
-  GeomVertexWriter vw(vdata, InternalName::get_vertex());
-  GeomVertexWriter cw(vdata, InternalName::get_color());
-  GeomVertexWriter tw(vdata, InternalName::get_texcoord());
-
+  vd->unclean_set_num_rows(4);
+  GeomVertexWriter vw(vd, InternalName::get_vertex());
+  GeomVertexWriter cw(vd, InternalName::get_color());
+  GeomVertexWriter tw(vd, InternalName::get_texcoord());
   for (const auto &v : verts) {
-    vw.add_data3f(v.position.x, v.position.y, 0.f);
-    cw.add_data4i(v.colour.red, v.colour.green, v.colour.blue, v.colour.alpha);
-    tw.add_data2f(v.tex_coord.x, v.tex_coord.y);
+    vw.add_data3f(v.x, v.y, 0.f);
+    cw.add_data4i(255, 255, 255, 255);
+    tw.add_data2f(v.u, v.v);
   }
-
   PT(GeomTriangles) tris = new GeomTriangles(GeomEnums::UH_static);
-  {
-    PT(GeomVertexArrayData) idata = tris->modify_vertices();
-    idata->unclean_set_num_rows(6);
-    GeomVertexWriter iw(idata, 0);
-    for (int i : idx) iw.add_data1i(i);
-  }
-  PT(Geom) g = new Geom(vdata);
+  PT(GeomVertexArrayData) idata = tris->modify_vertices();
+  idata->unclean_set_num_rows(6);
+  GeomVertexWriter iw(idata, 0);
+  for (int i : idx) iw.add_data1i(i);
+
+  PT(Geom) g = new Geom(vd);
   g->add_primitive(tris);
   return g;
 }
 
-// ---------------------------------------------------------------------------
-// init() — called once from RmlRegion after window is created
-// ---------------------------------------------------------------------------
-
-static PT(GraphicsOutput) make_rgba_buffer(GraphicsOutput *window,
-                                            const std::string &name,
-                                            PT(Texture) &tex_out) {
+// Create a single RGBA GraphicsBuffer sharing the GSG of parent_window.
+static RmlRenderInterface::LayerBuffer *
+make_layer_buffer(GraphicsOutput *parent_window, const std::string &name) {
   FrameBufferProperties fbp;
   fbp.set_rgb_color(1);
   fbp.set_rgba_bits(8, 8, 8, 8);
   fbp.set_depth_bits(0);
-  fbp.set_force_software(0);
 
-  int w = window->get_x_size();
-  int h = window->get_y_size();
+  int w = parent_window->get_x_size();
+  int h = parent_window->get_y_size();
 
-  tex_out = new Texture(name);
-  tex_out->setup_2d_texture(w, h, Texture::T_unsigned_byte, Texture::F_rgba);
-  tex_out->set_wrap_u(SamplerState::WM_clamp);
-  tex_out->set_wrap_v(SamplerState::WM_clamp);
-  tex_out->set_minfilter(SamplerState::FT_linear);
-  tex_out->set_magfilter(SamplerState::FT_linear);
+  PT(Texture) tex = new Texture(name);
+  tex->setup_2d_texture(w, h, Texture::T_unsigned_byte, Texture::F_rgba);
+  tex->set_wrap_u(SamplerState::WM_clamp);
+  tex->set_wrap_v(SamplerState::WM_clamp);
+  tex->set_minfilter(SamplerState::FT_linear);
+  tex->set_magfilter(SamplerState::FT_linear);
 
-  GraphicsOutput *buf = window->make_texture_buffer(name, w, h, tex_out, false, &fbp);
+  PT(GraphicsOutput) buf = parent_window->make_texture_buffer(
+    name, w, h, tex, false, &fbp);
   if (buf == nullptr) {
-    rmlui_cat.error() << "Failed to create layer buffer '" << name << "'\n";
-    tex_out = nullptr;
+    rmlui_cat.error()
+      << "Failed to allocate RmlUi layer buffer '" << name << "'\n";
     return nullptr;
   }
-  // We drive these buffers manually (render_into_region is called by us).
-  // Disable automatic engine rendering so we don't pay for an extra pass.
+  // Disable automatic engine rendering; we drive these manually.
   buf->set_active(false);
-  return buf;
+
+  PT(DisplayRegion) dr = buf->make_display_region();
+  dr->set_clear_color_active(true);
+  dr->set_clear_color(LColor(0, 0, 0, 0));
+
+  auto *lb = new RmlRenderInterface::LayerBuffer;
+  lb->buf   = buf;
+  lb->dr    = dr;
+  lb->tex   = tex;
+  lb->in_use     = false;
+  lb->frame_open = false;
+  return lb;
 }
+
+// ===========================================================================
+// init() — allocate layer pool
+// ===========================================================================
 
 void RmlRenderInterface::
 init(GraphicsOutput *window) {
@@ -349,28 +361,29 @@ init(GraphicsOutput *window) {
   _window = window;
 
   // Pre-allocate 4 layer buffers and 2 scratch buffers.
-  for (int i = 0; i < 4; i++) {
-    LayerBuffer *lb = new LayerBuffer;
-    lb->buf = make_rgba_buffer(window, std::string("rmlui-layer-") + std::to_string(i), lb->tex);
-    lb->in_use = false;
-    _layer_pool.push_back(lb);
+  for (int i = 0; i < 4; ++i) {
+    LayerBuffer *lb = make_layer_buffer(window,
+      std::string("rmlui-layer-") + std::to_string(i));
+    if (lb) _layer_pool.push_back(lb);
   }
-  for (int i = 0; i < 2; i++) {
-    _scratch_buf[i] = make_rgba_buffer(window, std::string("rmlui-scratch-") + std::to_string(i), _scratch[i]);
+  for (int i = 0; i < 2; ++i) {
+    _scratch[i] = make_layer_buffer(window,
+      std::string("rmlui-scratch-") + std::to_string(i));
+    if (_scratch[i]) _scratch[i]->in_use = true; // never returned to pool
   }
-  _mask_buf = make_rgba_buffer(window, "rmlui-mask", _mask_tex);
+  _mask_lb = make_layer_buffer(window, "rmlui-mask");
+  if (_mask_lb) _mask_lb->in_use = true;
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // Lazy shader compilation
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 void RmlRenderInterface::
 ensure_shaders() {
   if (_shaders_ready) return;
   _shaders_ready = true;
 
-  // Base state shared by all compositing operations: no depth, alpha blend.
   CPT(RenderState) base = RenderState::make(
     CullBinAttrib::make("unsorted", 0),
     DepthTestAttrib::make(RenderAttrib::M_none),
@@ -378,36 +391,37 @@ ensure_shaders() {
     ColorAttrib::make_vertex()
   );
 
-  CPT(RenderState) blend_over = base->add_attrib(
-    ColorBlendAttrib::make(ColorBlendAttrib::M_add,
+  auto blend_over = [&]() {
+    return base->add_attrib(ColorBlendAttrib::make(
+      ColorBlendAttrib::M_add,
       ColorBlendAttrib::O_incoming_alpha,
       ColorBlendAttrib::O_one_minus_incoming_alpha));
-
-  CPT(RenderState) blend_replace = base->add_attrib(
-    ColorBlendAttrib::make(ColorBlendAttrib::M_add,
+  };
+  auto blend_replace = [&]() {
+    return base->add_attrib(ColorBlendAttrib::make(
+      ColorBlendAttrib::M_add,
       ColorBlendAttrib::O_one,
       ColorBlendAttrib::O_zero));
-
-  auto make_state = [&](const char *vert, const char *frag,
-                        CPT(RenderState) blend_base) -> CPT(RenderState) {
-    PT(Shader) sh = Shader::make(Shader::SL_GLSL, vert, frag);
-    CPT(RenderAttrib) sa = ShaderAttrib::make(sh);
-    return blend_base->add_attrib(sa);
   };
 
-  _shader_passthrough  = make_state(s_vert_passthrough, s_frag_passthrough, blend_over);
-  _shader_color_matrix = make_state(s_vert_passthrough, s_frag_color_matrix, blend_replace);
-  _shader_blend_mask   = make_state(s_vert_passthrough, s_frag_blend_mask, blend_replace);
-  _shader_drop_shadow  = make_state(s_vert_passthrough, s_frag_drop_shadow, blend_replace);
-  _shader_blur_h       = make_state(s_vert_blur, s_frag_blur, blend_replace);
-  _shader_blur_v       = make_state(s_vert_blur, s_frag_blur, blend_replace);
-  _shader_gradient     = make_state(s_vert_ui, s_frag_gradient, blend_over);
-  _shader_creation     = make_state(s_vert_ui, s_frag_creation, blend_over);
+  auto make_state = [&](const char *vert, const char *frag,
+                        CPT(RenderState) blend) -> CPT(RenderState) {
+    PT(Shader) sh = Shader::make(Shader::SL_GLSL, vert, frag);
+    return blend->add_attrib(ShaderAttrib::make(sh));
+  };
+
+  _shader_passthrough  = make_state(s_vert_passthrough, s_frag_passthrough,  blend_over());
+  _shader_color_matrix = make_state(s_vert_passthrough, s_frag_color_matrix, blend_replace());
+  _shader_blend_mask   = make_state(s_vert_passthrough, s_frag_blend_mask,   blend_replace());
+  _shader_drop_shadow  = make_state(s_vert_passthrough, s_frag_drop_shadow,  blend_replace());
+  _shader_blur         = make_state(s_vert_blur,        s_frag_blur,         blend_replace());
+  _shader_gradient     = make_state(s_vert_ui,          s_frag_gradient,     blend_over());
+  _shader_creation     = make_state(s_vert_ui,          s_frag_creation,     blend_over());
 }
 
-// ---------------------------------------------------------------------------
-// Layer pool helpers
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Layer pool management
+// ===========================================================================
 
 RmlRenderInterface::LayerBuffer *RmlRenderInterface::
 alloc_layer() {
@@ -417,38 +431,89 @@ alloc_layer() {
       return lb;
     }
   }
-  // Pool exhausted — create a new one on the fly (rare case, deep nesting).
-  LayerBuffer *lb = new LayerBuffer;
-  size_t idx = _layer_pool.size();
-  lb->buf = make_rgba_buffer(_window, "rmlui-layer-dyn-" + std::to_string(idx), lb->tex);
-  lb->in_use = true;
-  _layer_pool.push_back(lb);
+  // Pool exhausted — grow on demand (rare: deep nesting or many filters).
+  LayerBuffer *lb = make_layer_buffer(
+    _window, "rmlui-layer-dyn-" + std::to_string(_layer_pool.size()));
+  if (lb) {
+    lb->in_use = true;
+    _layer_pool.push_back(lb);
+  }
   return lb;
 }
 
 void RmlRenderInterface::
 free_layer(LayerBuffer *lb) {
-  lb->in_use = false;
+  nassertv(lb != nullptr);
+  lb->in_use     = false;
+  lb->frame_open = false;
 }
 
 RmlRenderInterface::LayerBuffer *RmlRenderInterface::
 get_layer(Rml::LayerHandle handle) {
   if (handle == 0) return nullptr;
-  // handle is (LayerBuffer* + 1) cast, so we can distinguish 0 = base layer.
   return reinterpret_cast<LayerBuffer *>(handle - 1);
 }
 
-// ---------------------------------------------------------------------------
-// render() — drives one frame
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Frame management: begin / end a layer buffer
+// ===========================================================================
 
 void RmlRenderInterface::
-render(Rml::Context *context, CullTraverser *trav) {
+begin_layer(LayerBuffer *lb) {
+  nassertv(lb != nullptr && _gsg != nullptr && _thread != nullptr);
+  if (lb->frame_open) return;
+
+  if (!lb->buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
+    rmlui_cat.error() << "begin_frame failed on layer buffer\n";
+    return;
+  }
+  lb->frame_open = true;
+
+  // Clear to transparent black.
+  DisplayRegionPipelineReader dr_reader(lb->dr, _thread);
+  _gsg->prepare_display_region(&dr_reader);
+  _gsg->clear(lb->dr);
+}
+
+void RmlRenderInterface::
+end_layer(LayerBuffer *lb, LayerBuffer *dest) {
+  // End the source layer's frame (flushes FBO → texture).
+  if (lb != nullptr && lb->frame_open) {
+    lb->buf->end_frame(GraphicsOutput::FM_render, _thread);
+    lb->frame_open = false;
+  }
+
+  // Rebind the destination FBO so subsequent draw calls go there.
+  if (dest != nullptr) {
+    if (!dest->frame_open) {
+      dest->buf->begin_frame(GraphicsOutput::FM_render, _thread);
+      dest->frame_open = true;
+    }
+    DisplayRegionPipelineReader dr_reader(dest->dr, _thread);
+    _gsg->prepare_display_region(&dr_reader);
+  } else {
+    // Rebind the main window.  FM_parasite just re-activates the context.
+    _window->begin_frame(GraphicsOutput::FM_parasite, _thread);
+    // prepare_display_region is not strictly required here; the engine's
+    // change_scenes already ran before our do_cull was called.
+  }
+}
+
+// ===========================================================================
+// render() — drive one frame
+// ===========================================================================
+
+void RmlRenderInterface::
+render(Rml::Context *context, CullTraverser *trav,
+       GraphicsStateGuardian *gsg, Thread *current_thread) {
   nassertv(context != nullptr);
   MutexHolder holder(_lock);
   ensure_shaders();
 
-  _trav = trav;
+  _trav   = trav;
+  _gsg    = gsg;
+  _thread = current_thread;
+
   _net_transform = trav->get_world_transform();
   _net_state = RenderState::make(
     CullBinAttrib::make("unsorted", 0),
@@ -462,87 +527,112 @@ render(Rml::Context *context, CullTraverser *trav) {
   );
   _dimensions = context->GetDimensions();
 
-  // Base layer = main window (handle 0).
   _layer_stack.clear();
   LayerEntry base;
-  base.handle = 0;
+  base.handle  = 0;
   base.scissor = Rml::Rectanglei::FromSize({_dimensions.x, _dimensions.y});
   _layer_stack.push_back(base);
 
   context->Render();
 
+  // Sanity: any unclosed layers are an RmlUi bug, but clean up regardless.
+  while (_layer_stack.size() > 1) {
+    LayerEntry top = _layer_stack.back();
+    _layer_stack.pop_back();
+    if (top.handle != 0) {
+      LayerBuffer *lb = get_layer(top.handle);
+      if (lb && lb->frame_open) {
+        lb->buf->end_frame(GraphicsOutput::FM_render, _thread);
+        lb->frame_open = false;
+      }
+      free_layer(lb);
+    }
+  }
   _layer_stack.clear();
-  _trav = nullptr;
+
+  _trav   = nullptr;
+  _gsg    = nullptr;
+  _thread = nullptr;
   _net_transform = nullptr;
-  _net_state = nullptr;
+  _net_state     = nullptr;
 }
 
-// ---------------------------------------------------------------------------
-// Required interface — geometry
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Internal geometry helpers
+// ===========================================================================
 
 PT(Geom) RmlRenderInterface::
 make_geom(Rml::Span<const Rml::Vertex> vertices,
           Rml::Span<const int> indices,
           GeomEnums::UsageHint uh) {
 
-  PT(GeomVertexData) vdata = new GeomVertexData(
+  PT(GeomVertexData) vd = new GeomVertexData(
     "", GeomVertexFormat::get_v3c4t2(), uh);
-  vdata->unclean_set_num_rows((int)vertices.size());
+  vd->unclean_set_num_rows((int)vertices.size());
 
-  GeomVertexWriter vw(vdata, InternalName::get_vertex());
-  GeomVertexWriter cw(vdata, InternalName::get_color());
-  GeomVertexWriter tw(vdata, InternalName::get_texcoord());
-
+  GeomVertexWriter vw(vd, InternalName::get_vertex());
+  GeomVertexWriter cw(vd, InternalName::get_color());
+  GeomVertexWriter tw(vd, InternalName::get_texcoord());
   for (const Rml::Vertex &v : vertices) {
-    vw.add_data3f(
-      LVector3f::right() * v.position.x +
-      LVector3f::up()    * v.position.y);
+    vw.add_data3f(LVector3f::right() * v.position.x +
+                  LVector3f::up()    * v.position.y);
     cw.add_data4i(v.colour.red, v.colour.green,
                   v.colour.blue, v.colour.alpha);
     tw.add_data2f(v.tex_coord.x, 1.0f - v.tex_coord.y);
   }
 
   PT(GeomTriangles) tris = new GeomTriangles(uh);
-  {
-    PT(GeomVertexArrayData) idata = tris->modify_vertices();
-    idata->unclean_set_num_rows((int)indices.size());
-    GeomVertexWriter iw(idata, 0);
-    for (int idx : indices) iw.add_data1i(idx);
-  }
+  PT(GeomVertexArrayData) idata = tris->modify_vertices();
+  idata->unclean_set_num_rows((int)indices.size());
+  GeomVertexWriter iw(idata, 0);
+  for (int i : indices) iw.add_data1i(i);
 
-  PT(Geom) geom = new Geom(vdata);
-  geom->add_primitive(tris);
-  return geom;
+  PT(Geom) g = new Geom(vd);
+  g->add_primitive(tris);
+  return g;
 }
 
 void RmlRenderInterface::
 render_geom(const Geom *geom, const RenderState *state, Rml::Vector2f translation) {
-  LVector3 offset =
-    LVector3::right() * translation.x +
-    LVector3::up()    * translation.y;
+  LVector3 off = LVector3::right() * translation.x + LVector3::up() * translation.y;
 
-  CPT(RenderState) full_state = _net_state->compose(state);
-  if (_scissor_active) {
-    if (_dimensions.x > 0 && _dimensions.y > 0) {
-      const Rml::Rectanglei &r = _scissor_rect;
-      LVecBase4 sc(
-        r.Left()   / (PN_stdfloat)_dimensions.x,
-        r.Right()  / (PN_stdfloat)_dimensions.x,
-        1.0f - r.Bottom() / (PN_stdfloat)_dimensions.y,
-        1.0f - r.Top()    / (PN_stdfloat)_dimensions.y
-      );
-      full_state = full_state->add_attrib(ScissorAttrib::make(sc));
-    }
+  CPT(RenderState) full = _net_state->compose(state);
+  if (_scissor_active && _dimensions.x > 0 && _dimensions.y > 0) {
+    const auto &r = _scissor_rect;
+    LVecBase4 sc(
+      r.Left()   / (PN_stdfloat)_dimensions.x,
+      r.Right()  / (PN_stdfloat)_dimensions.x,
+      1.f - r.Bottom() / (PN_stdfloat)_dimensions.y,
+      1.f - r.Top()    / (PN_stdfloat)_dimensions.y);
+    full = full->add_attrib(ScissorAttrib::make(sc));
   }
 
   CPT(TransformState) xform =
     _trav->get_scene()->get_cs_world_transform()->compose(
-      _net_transform->compose(TransformState::make_pos(offset)));
+      _net_transform->compose(TransformState::make_pos(off)));
 
-  CullableObject obj(geom, full_state, xform);
+  CullableObject obj(geom, full, xform);
   _trav->get_cull_handler()->record_object(std::move(obj), _trav);
 }
+
+void RmlRenderInterface::
+composite_quad(CPT(RenderState) state, PT(Texture) tex) {
+  // Wire the texture into the ShaderAttrib of the given state.
+  CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
+  if (sa != nullptr && tex != nullptr) {
+    sa = DCAST(ShaderAttrib, sa)->set_shader_input(
+      InternalName::make("p3d_Texture0"), tex);
+    state = state->add_attrib(sa);
+  }
+  CPT(Geom) quad = make_fullscreen_quad();
+  CPT(TransformState) ident = _trav->get_scene()->get_cs_world_transform();
+  CullableObject obj(quad, state, ident);
+  _trav->get_cull_handler()->record_object(std::move(obj), _trav);
+}
+
+// ===========================================================================
+// Required interface — CompileGeometry / RenderGeometry / ReleaseGeometry
+// ===========================================================================
 
 Rml::CompiledGeometryHandle RmlRenderInterface::
 CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
@@ -557,20 +647,19 @@ RenderGeometry(Rml::CompiledGeometryHandle geometry,
                Rml::Vector2f translation,
                Rml::TextureHandle texture) {
   CompiledGeometry *cg = (CompiledGeometry *)geometry;
-  if (cg == nullptr) return;
+  if (!cg) return;
 
   CPT(RenderState) state;
   Texture *tex = (Texture *)texture;
-  if (tex != nullptr) {
-    PT(TextureStage) stage = new TextureStage("");
-    stage->set_mode(TextureStage::M_modulate);
+  if (tex) {
+    PT(TextureStage) ts = new TextureStage("");
+    ts->set_mode(TextureStage::M_modulate);
     CPT(TextureAttrib) ta = DCAST(TextureAttrib, TextureAttrib::make());
-    ta = DCAST(TextureAttrib, ta->add_on_stage(stage, tex));
+    ta = DCAST(TextureAttrib, ta->add_on_stage(ts, tex));
     state = RenderState::make(ta);
   } else {
     state = RenderState::make_empty();
   }
-
   render_geom(cg->_geom, state, translation);
 }
 
@@ -579,35 +668,26 @@ ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
   delete (CompiledGeometry *)geometry;
 }
 
-// ---------------------------------------------------------------------------
-// Required interface — textures
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Required interface — LoadTexture / GenerateTexture / ReleaseTexture
+// ===========================================================================
 
 Rml::TextureHandle RmlRenderInterface::
 LoadTexture(Rml::Vector2i &texture_dimensions, const Rml::String &source) {
-  LoaderOptions options;
-  if (Texture::get_textures_power_2() == ATS_none) {
-    options.set_auto_texture_scale(ATS_none);
-  } else {
-    options.set_auto_texture_scale(ATS_pad);
-  }
+  LoaderOptions opts;
+  opts.set_auto_texture_scale(
+    Texture::get_textures_power_2() == ATS_none ? ATS_none : ATS_pad);
 
-  Filename fn = Filename::from_os_specific(source);
-  PT(Texture) tex = TexturePool::load_texture(fn, 0, false, options);
-  if (tex == nullptr) {
-    texture_dimensions = {0, 0};
-    return 0;
-  }
+  PT(Texture) tex = TexturePool::load_texture(
+    Filename::from_os_specific(source), 0, false, opts);
+  if (!tex) { texture_dimensions = {0,0}; return 0; }
 
   tex->set_minfilter(SamplerState::FT_nearest);
   tex->set_magfilter(SamplerState::FT_nearest);
 
   int w = tex->get_orig_file_x_size();
   int h = tex->get_orig_file_y_size();
-  if (w == 0 && h == 0) {
-    w = tex->get_x_size();
-    h = tex->get_y_size();
-  }
+  if (!w && !h) { w = tex->get_x_size(); h = tex->get_y_size(); }
   texture_dimensions = {w, h};
 
   tex->ref();
@@ -615,35 +695,27 @@ LoadTexture(Rml::Vector2i &texture_dimensions, const Rml::String &source) {
 }
 
 Rml::TextureHandle RmlRenderInterface::
-GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i source_dimensions) {
+GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dims) {
   PT(Texture) tex = new Texture;
-  tex->setup_2d_texture(source_dimensions.x, source_dimensions.y,
-                        Texture::T_unsigned_byte, Texture::F_rgba);
-  tex->set_size_padded(source_dimensions.x, source_dimensions.y);
+  tex->setup_2d_texture(dims.x, dims.y, Texture::T_unsigned_byte, Texture::F_rgba);
+  tex->set_size_padded(dims.x, dims.y);
 
-  PTA_uchar image = tex->modify_ram_image();
-
-  // RmlUi provides RGBA; Panda stores BGRA internally
-  size_t src_stride = source_dimensions.x * 4;
+  PTA_uchar img = tex->modify_ram_image();
+  size_t src_stride = dims.x * 4;
   size_t dst_stride = tex->get_x_size() * 4;
-  const unsigned char *src = source.data() + src_stride * source_dimensions.y;
-  unsigned char *dst = &image[0];
-
+  const unsigned char *src = source.data() + src_stride * dims.y;
+  unsigned char *dst = &img[0];
   for (; src > source.data(); dst += dst_stride) {
     src -= src_stride;
     for (size_t i = 0; i < src_stride; i += 4) {
-      dst[i + 0] = src[i + 2]; // B
-      dst[i + 1] = src[i + 1]; // G
-      dst[i + 2] = src[i + 0]; // R
-      dst[i + 3] = src[i + 3]; // A
+      dst[i+0] = src[i+2]; dst[i+1] = src[i+1];
+      dst[i+2] = src[i+0]; dst[i+3] = src[i+3];
     }
   }
-
   tex->set_wrap_u(SamplerState::WM_clamp);
   tex->set_wrap_v(SamplerState::WM_clamp);
   tex->set_minfilter(SamplerState::FT_nearest);
   tex->set_magfilter(SamplerState::FT_nearest);
-
   tex->ref();
   return (Rml::TextureHandle)tex.p();
 }
@@ -651,14 +723,12 @@ GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i source_dimensio
 void RmlRenderInterface::
 ReleaseTexture(Rml::TextureHandle texture) {
   Texture *tex = (Texture *)texture;
-  if (tex != nullptr) {
-    unref_delete(tex);
-  }
+  if (tex) unref_delete(tex);
 }
 
-// ---------------------------------------------------------------------------
-// Required interface — scissor
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Required interface — EnableScissorRegion / SetScissorRegion
+// ===========================================================================
 
 void RmlRenderInterface::
 EnableScissorRegion(bool enable) {
@@ -670,300 +740,277 @@ SetScissorRegion(Rml::Rectanglei region) {
   _scissor_rect = region;
 }
 
-// ---------------------------------------------------------------------------
-// Layer management
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Layer interface — PushLayer / CompositeLayers / PopLayer
+// ===========================================================================
 
 Rml::LayerHandle RmlRenderInterface::
 PushLayer() {
   LayerBuffer *lb = alloc_layer();
+  if (!lb) return 0;
 
-  // Clear the layer texture by resizing it if needed and marking it dirty.
-  if (_window != nullptr) {
+  // Resize the layer buffer to match the window if needed.
+  if (_window) {
     int w = _window->get_x_size();
     int h = _window->get_y_size();
     if (lb->tex->get_x_size() != w || lb->tex->get_y_size() != h) {
-      lb->tex->set_x_size(w);
-      lb->tex->set_y_size(h);
+      lb->buf->set_size_and_recalc(w, h);
     }
   }
 
-  // Encode pointer+1 so zero (base layer) stays reserved.
+  // Bind the layer's FBO and clear to transparent black.
+  begin_layer(lb);
+
   Rml::LayerHandle handle = reinterpret_cast<Rml::LayerHandle>(lb) + 1;
 
-  _layer_stack.push_back({handle, _scissor_rect});
+  LayerEntry entry;
+  entry.handle  = handle;
+  entry.scissor = _scissor_rect;
+  _layer_stack.push_back(entry);
+
   return handle;
 }
 
 void RmlRenderInterface::
-CompositeLayers(Rml::LayerHandle source_handle, Rml::LayerHandle destination_handle,
+CompositeLayers(Rml::LayerHandle source_handle,
+                Rml::LayerHandle destination_handle,
                 Rml::BlendMode blend_mode,
                 Rml::Span<const Rml::CompiledFilterHandle> filters) {
-  // Nothing to do with no source.
-  if (source_handle == 0) return;
-  LayerBuffer *src_lb = get_layer(source_handle);
-  if (src_lb == nullptr || src_lb->tex == nullptr) return;
 
-  // Apply filters to source texture, ping-ponging through scratch buffers.
-  PT(Texture) result_tex = apply_filters(src_lb->tex, filters);
+  LayerBuffer *src_lb  = get_layer(source_handle);
+  LayerBuffer *dest_lb = get_layer(destination_handle);
 
-  // Composite the result into the destination.  Destination 0 = main window.
+  if (src_lb == nullptr || !src_lb->frame_open) return;
+
+  // End the source layer's frame → texture is now ready.
+  // Rebind destination so compositing goes to the right FBO.
+  end_layer(src_lb, dest_lb);
+
+  // Apply filter chain in ping-pong.
+  PT(Texture) result = apply_filters(src_lb->tex, filters);
+
+  // Build compositing state.
   CPT(RenderState) state = _shader_passthrough;
-
-  // Set texture input and blend factor.
   CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
   sa = DCAST(ShaderAttrib, sa)->set_shader_input(
     InternalName::make("u_blend_factor"), LVecBase4f(1.f));
-  sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-    InternalName::make("p3d_Texture0"), result_tex);
+  state = state->add_attrib(sa);
 
   if (blend_mode == Rml::BlendMode::Replace) {
     state = state->add_attrib(ColorBlendAttrib::make(
       ColorBlendAttrib::M_add,
-      ColorBlendAttrib::O_one,
-      ColorBlendAttrib::O_zero));
+      ColorBlendAttrib::O_one, ColorBlendAttrib::O_zero));
   }
-  state = state->add_attrib(sa);
 
-  // The fullscreen quad covers NDC -1..1; we bypass the normal transform.
-  CPT(Geom) quad = make_fullscreen_quad();
-  CPT(RenderState) full = state;
-
-  CPT(TransformState) ident =
-    _trav->get_scene()->get_cs_world_transform();
-
-  CullableObject obj(quad, full, ident);
-  _trav->get_cull_handler()->record_object(std::move(obj), _trav);
+  composite_quad(state, result);
 }
 
 void RmlRenderInterface::
 PopLayer() {
-  if (_layer_stack.size() <= 1) return; // Don't pop base layer.
+  if (_layer_stack.size() <= 1) return;
   LayerEntry top = _layer_stack.back();
   _layer_stack.pop_back();
 
-  if (top.handle != 0) {
-    LayerBuffer *lb = get_layer(top.handle);
-    free_layer(lb);
+  // Restore scissor to the state before PushLayer.
+  _scissor_rect = top.scissor;
+
+  if (top.handle == 0) return;
+  LayerBuffer *lb = get_layer(top.handle);
+  if (!lb) return;
+
+  // End this layer's frame if still open (shouldn't happen — CompositeLayers
+  // should have already ended it, but guard against partial rendering).
+  if (lb->frame_open) {
+    LayerBuffer *parent = (_layer_stack.empty() || _layer_stack.back().handle == 0)
+                          ? nullptr
+                          : get_layer(_layer_stack.back().handle);
+    end_layer(lb, parent);
   }
+  free_layer(lb);
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // SaveLayerAsTexture / SaveLayerAsMaskImage
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 Rml::TextureHandle RmlRenderInterface::
 SaveLayerAsTexture() {
-  // Capture the current layer's content into a new managed texture.
-  if (_layer_stack.empty()) return 0;
-  const LayerEntry &top = _layer_stack.back();
-  if (top.handle == 0) return 0; // Base layer capture not supported.
-
-  LayerBuffer *lb = get_layer(top.handle);
-  if (lb == nullptr || lb->tex == nullptr) return 0;
-
-  // Allocate a fresh texture and copy the layer data into it.
-  PT(Texture) snap = new Texture("rmlui-snap");
-  snap->setup_2d_texture(lb->tex->get_x_size(), lb->tex->get_y_size(),
-                         Texture::T_unsigned_byte, Texture::F_rgba);
-  snap->set_wrap_u(SamplerState::WM_clamp);
-  snap->set_wrap_v(SamplerState::WM_clamp);
-  snap->set_minfilter(SamplerState::FT_linear);
-  snap->set_magfilter(SamplerState::FT_linear);
-  // Shallow-copy the ram image (it will be pushed to the GPU next frame).
-  // For a real implementation we'd need a GSG blit; this is a best-effort
-  // path that works when the texture has a RAM image from previous frames.
-  snap->ref();
-  return (Rml::TextureHandle)snap.p();
-}
-
-Rml::CompiledFilterHandle RmlRenderInterface::
-SaveLayerAsMaskImage() {
-  // Save the current top layer as a mask filter.
   if (_layer_stack.empty()) return 0;
   const LayerEntry &top = _layer_stack.back();
   if (top.handle == 0) return 0;
 
   LayerBuffer *lb = get_layer(top.handle);
-  if (lb == nullptr || lb->tex == nullptr) return 0;
+  if (!lb || !lb->tex) return 0;
+
+  // Snapshot the current layer: end frame to flush the texture, allocate a
+  // new layer for subsequent rendering, start its frame.
+  LayerBuffer *snap_lb = alloc_layer();
+  if (!snap_lb) return 0;
+
+  if (lb->frame_open) {
+    // End lb → snap_lb; we'll restart lb's frame for future rendering.
+    end_layer(lb, snap_lb);
+    begin_layer(lb);
+  }
+
+  snap_lb->tex->ref();
+  return (Rml::TextureHandle)snap_lb->tex.p();
+}
+
+Rml::CompiledFilterHandle RmlRenderInterface::
+SaveLayerAsMaskImage() {
+  if (_layer_stack.empty()) return 0;
+  const LayerEntry &top = _layer_stack.back();
+  if (top.handle == 0) return 0;
+
+  LayerBuffer *lb = get_layer(top.handle);
+  if (!lb || !lb->tex) return 0;
+
+  // Flush the current layer to its texture.
+  if (lb->frame_open) {
+    LayerBuffer *parent = (_layer_stack.size() >= 2 &&
+                           _layer_stack[_layer_stack.size()-2].handle != 0)
+      ? get_layer(_layer_stack[_layer_stack.size()-2].handle) : nullptr;
+    end_layer(lb, parent);
+    begin_layer(lb); // restart for future rendering
+  }
 
   CompiledFilterData *fd = new CompiledFilterData;
-  fd->type = FilterType::MaskImage;
+  fd->type     = FilterType::MaskImage;
   fd->mask_tex = lb->tex;
   return reinterpret_cast<Rml::CompiledFilterHandle>(fd);
 }
 
-// ---------------------------------------------------------------------------
-// apply_filters — ping-pong the source texture through filter shaders
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// apply_filters — ping-pong filter chain
+// ===========================================================================
 
 PT(Texture) RmlRenderInterface::
 apply_filters(PT(Texture) src,
               Rml::Span<const Rml::CompiledFilterHandle> filters) {
   if (filters.empty()) return src;
-
-  // We have two scratch textures for ping-pong.
-  PT(Texture) ping = src;
-  PT(Texture) pong = _scratch[0];
-
-  // Helper: submit a fullscreen blit with a given state + source tex.
-  auto blit = [&](CPT(RenderState) state, PT(Texture) in_tex) {
-    CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
-    sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("p3d_Texture0"), in_tex);
-    state = state->add_attrib(sa);
-    CPT(Geom) quad = make_fullscreen_quad();
-    CPT(TransformState) ident = _trav->get_scene()->get_cs_world_transform();
-    CullableObject obj(quad, state, ident);
-    _trav->get_cull_handler()->record_object(std::move(obj), _trav);
-    PT(Texture) tmp = pong;
-    pong = ping;
-    ping = tmp;
-  };
+  ensure_shaders();
 
   int w = _window ? _window->get_x_size() : 1;
   int h = _window ? _window->get_y_size() : 1;
   float inv_w = w > 0 ? 1.f / (float)w : 1.f;
   float inv_h = h > 0 ? 1.f / (float)h : 1.f;
 
+  PT(Texture) ping = src;
+  int scratch_idx = 0; // alternates between _scratch[0] and _scratch[1]
+
+  // Helper: blit ping through a shader state into the next scratch buffer.
+  // Updates ping to be the scratch buffer's texture.
+  auto blit = [&](CPT(RenderState) state) {
+    LayerBuffer *dest = _scratch[scratch_idx ^ 1];
+    if (dest) {
+      begin_layer(dest);
+      composite_quad(state, ping);
+      end_layer(dest, nullptr);
+      ping = dest->tex;
+    }
+    scratch_idx ^= 1;
+  };
+
   for (const Rml::CompiledFilterHandle fh : filters) {
-    if (fh == 0) continue;
+    if (!fh) continue;
     const CompiledFilterData &fd = *reinterpret_cast<const CompiledFilterData *>(fh);
 
     switch (fd.type) {
 
     case FilterType::Passthrough: {
-      CPT(RenderState) state = _shader_passthrough;
-      CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
+      CPT(RenderState) st = _shader_passthrough;
+      CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
       sa = DCAST(ShaderAttrib, sa)->set_shader_input(
         InternalName::make("u_blend_factor"), LVecBase4f(fd.blend_factor));
-      state = state->add_attrib(sa);
-      blit(state, ping);
+      blit(st->add_attrib(sa));
       break;
     }
 
     case FilterType::ColorMatrix: {
+      CPT(RenderState) st = _shader_color_matrix;
       PTA_LMatrix4f mat;
       mat.push_back(UnalignedLMatrix4f(fd.color_matrix));
-      CPT(RenderState) state = _shader_color_matrix;
-      CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
+      CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
       sa = DCAST(ShaderAttrib, sa)->set_shader_input(
         InternalName::make("u_color_matrix"), mat);
-      state = state->add_attrib(sa);
-      blit(state, ping);
+      blit(st->add_attrib(sa));
       break;
     }
 
     case FilterType::Blur: {
       float sigma = std::max(fd.sigma, 0.1f);
-      float weights_f[BLUR_WEIGHTS];
-      compute_blur_weights(sigma, weights_f);
-
+      float wf[BLUR_WEIGHTS];
+      compute_blur_weights(sigma, wf);
       PTA_float weights;
-      for (int i = 0; i < BLUR_WEIGHTS; i++) weights.push_back(weights_f[i]);
+      for (int i = 0; i < BLUR_WEIGHTS; ++i) weights.push_back(wf[i]);
 
-      // Horizontal pass.
-      {
-        CPT(RenderState) state = _shader_blur_h;
-        CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_weights"), weights);
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_axis"), LVecBase2f(1.f, 0.f));
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_inv_size"), LVecBase2f(inv_w, inv_h));
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_uv_min"), LVecBase2f(0.f, 0.f));
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_uv_max"), LVecBase2f(1.f, 1.f));
-        state = state->add_attrib(sa);
-        blit(state, ping);
-      }
-      // Vertical pass.
-      {
-        CPT(RenderState) state = _shader_blur_v;
-        CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_weights"), weights);
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_axis"), LVecBase2f(0.f, 1.f));
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_inv_size"), LVecBase2f(inv_w, inv_h));
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_uv_min"), LVecBase2f(0.f, 0.f));
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-          InternalName::make("u_uv_max"), LVecBase2f(1.f, 1.f));
-        state = state->add_attrib(sa);
-        blit(state, ping);
-      }
+      auto blur_pass = [&](LVecBase2f axis) {
+        CPT(RenderState) st = _shader_blur;
+        CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_weights"),  weights);
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_axis"),     axis);
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_inv_size"), LVecBase2f(inv_w, inv_h));
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_uv_min"),   LVecBase2f(0.f, 0.f));
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_uv_max"),   LVecBase2f(1.f, 1.f));
+        blit(st->add_attrib(sa));
+      };
+      blur_pass({1.f, 0.f});
+      blur_pass({0.f, 1.f});
       break;
     }
 
     case FilterType::DropShadow: {
-      float sigma = fd.sigma;
-      if (sigma >= 0.5f) {
-        // First blur the source to make the soft shadow.
-        float weights_f[BLUR_WEIGHTS];
-        compute_blur_weights(sigma, weights_f);
+      // Blur pass (if sigma >= 0.5).
+      if (fd.sigma >= 0.5f) {
+        float wf2[BLUR_WEIGHTS];
+        compute_blur_weights(fd.sigma, wf2);
         PTA_float weights;
-        for (int i = 0; i < BLUR_WEIGHTS; i++) weights.push_back(weights_f[i]);
-
-        auto blur_pass = [&](LVecBase2f axis) {
-          CPT(RenderState) state = _shader_blur_h;
-          CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
-          sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_weights"), weights);
-          sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_axis"), axis);
+        for (int i = 0; i < BLUR_WEIGHTS; ++i) weights.push_back(wf2[i]);
+        auto blur_pass2 = [&](LVecBase2f axis) {
+          CPT(RenderState) st = _shader_blur;
+          CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
+          sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_weights"),  weights);
+          sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_axis"),     axis);
           sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_inv_size"), LVecBase2f(inv_w, inv_h));
-          sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_uv_min"), LVecBase2f(0.f, 0.f));
-          sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_uv_max"), LVecBase2f(1.f, 1.f));
-          state = state->add_attrib(sa);
-          blit(state, ping);
+          sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_uv_min"),   LVecBase2f(0.f, 0.f));
+          sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_uv_max"),   LVecBase2f(1.f, 1.f));
+          blit(st->add_attrib(sa));
         };
-        blur_pass({1.f, 0.f});
-        blur_pass({0.f, 1.f});
+        blur_pass2({1.f, 0.f});
+        blur_pass2({0.f, 1.f});
       }
-
-      // Now draw the shadow offset + tinted, then composite original on top.
-      CPT(RenderState) state = _shader_drop_shadow;
-      CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
-      sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-        InternalName::make("u_shadow_color"), fd.color);
-      sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-        InternalName::make("u_offset"), fd.offset);
-      sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-        InternalName::make("u_inv_size"), LVecBase2f(inv_w, inv_h));
-      sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-        InternalName::make("u_uv_min"), LVecBase2f(0.f, 0.f));
-      sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-        InternalName::make("u_uv_max"), LVecBase2f(1.f, 1.f));
-      state = state->add_attrib(sa);
-      blit(state, ping);
+      // Draw shadow tinted + offset, then composite original on top.
+      {
+        CPT(RenderState) st = _shader_drop_shadow;
+        CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_shadow_color"), fd.color);
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_offset"),       fd.offset);
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_inv_size"),     LVecBase2f(inv_w, inv_h));
+        blit(st->add_attrib(sa));
+      }
       break;
     }
 
     case FilterType::MaskImage: {
-      if (fd.mask_tex == nullptr) break;
-      CPT(RenderState) state = _shader_blend_mask;
-      CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
-      sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-        InternalName::make("u_mask_tex"), fd.mask_tex);
-      state = state->add_attrib(sa);
-      blit(state, ping);
+      if (!fd.mask_tex) break;
+      CPT(RenderState) st = _shader_blend_mask;
+      CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
+      sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_mask_tex"), fd.mask_tex);
+      blit(st->add_attrib(sa));
       break;
     }
 
     case FilterType::Invalid:
-    default:
-      break;
+    default: break;
     }
   }
-
   return ping;
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // CompileFilter / ReleaseFilter
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 Rml::CompiledFilterHandle RmlRenderInterface::
 CompileFilter(const Rml::String &name, const Rml::Dictionary &parameters) {
@@ -971,99 +1018,80 @@ CompileFilter(const Rml::String &name, const Rml::Dictionary &parameters) {
 
   if (name == "opacity") {
     fd->type = FilterType::Passthrough;
-    fd->blend_factor = Rml::Get(parameters, "value", 1.0f);
+    fd->blend_factor = Rml::Get(parameters, "value", 1.f);
   }
   else if (name == "blur") {
-    fd->type = FilterType::Blur;
-    fd->sigma = Rml::Get(parameters, "sigma", 1.0f);
+    fd->type  = FilterType::Blur;
+    fd->sigma = Rml::Get(parameters, "sigma", 1.f);
   }
   else if (name == "drop-shadow") {
-    fd->type = FilterType::DropShadow;
+    fd->type  = FilterType::DropShadow;
     fd->sigma = Rml::Get(parameters, "sigma", 0.f);
-    Rml::Colourb col = Rml::Get(parameters, "color", Rml::Colourb());
-    fd->color = LColor(col.red / 255.f, col.green / 255.f,
-                       col.blue / 255.f, col.alpha / 255.f);
+    Rml::Colourb c = Rml::Get(parameters, "color", Rml::Colourb());
+    fd->color = LColor(c.red/255.f, c.green/255.f, c.blue/255.f, c.alpha/255.f);
     Rml::Vector2f off = Rml::Get(parameters, "offset", Rml::Vector2f(0.f));
     fd->offset = LVecBase2f(off.x, off.y);
   }
   else if (name == "brightness") {
     fd->type = FilterType::ColorMatrix;
     float v = Rml::Get(parameters, "value", 1.f);
-    fd->color_matrix = LMatrix4f::scale_mat(v, v, v) *
-                       LMatrix4f(LMatrix4f::ident_mat());
-    // Diagonal: scale rgb, keep alpha unchanged.
-    fd->color_matrix = LMatrix4f(
-      v, 0, 0, 0,
-      0, v, 0, 0,
-      0, 0, v, 0,
-      0, 0, 0, 1);
+    fd->color_matrix = LMatrix4f(v,0,0,0, 0,v,0,0, 0,0,v,0, 0,0,0,1);
   }
   else if (name == "contrast") {
     fd->type = FilterType::ColorMatrix;
     float v = Rml::Get(parameters, "value", 1.f);
-    float g = 0.5f - 0.5f * v;
-    fd->color_matrix = LMatrix4f(
-      v, 0, 0, 0,
-      0, v, 0, 0,
-      0, 0, v, 0,
-      g, g, g, 1);
+    float g = 0.5f - 0.5f*v;
+    fd->color_matrix = LMatrix4f(v,0,0,0, 0,v,0,0, 0,0,v,0, g,g,g,1);
   }
   else if (name == "invert") {
     fd->type = FilterType::ColorMatrix;
     float v = std::min(std::max(Rml::Get(parameters, "value", 1.f), 0.f), 1.f);
-    float inv = 1.f - 2.f * v;
-    fd->color_matrix = LMatrix4f(
-      inv, 0, 0, 0,
-      0, inv, 0, 0,
-      0, 0, inv, 0,
-      v,  v,  v, 1);
+    float i = 1.f - 2.f*v;
+    fd->color_matrix = LMatrix4f(i,0,0,0, 0,i,0,0, 0,0,i,0, v,v,v,1);
   }
   else if (name == "grayscale") {
     fd->type = FilterType::ColorMatrix;
-    float v = Rml::Get(parameters, "value", 1.f);
-    float r = v * 0.2126f, g = v * 0.7152f, b = v * 0.0722f;
-    float rv = 1.f - v;
+    float v = Rml::Get(parameters, "value", 1.f), rv = 1.f - v;
+    float r = v*0.2126f, g = v*0.7152f, b = v*0.0722f;
     fd->color_matrix = LMatrix4f(
-      r + rv, g,      b,      0,
-      r,      g + rv, b,      0,
-      r,      g,      b + rv, 0,
-      0,      0,      0,      1);
+      r+rv,g,   b,   0,
+      r,   g+rv,b,   0,
+      r,   g,   b+rv,0,
+      0,   0,   0,   1);
   }
   else if (name == "sepia") {
     fd->type = FilterType::ColorMatrix;
-    float v = Rml::Get(parameters, "value", 1.f);
-    float rv = 1.f - v;
+    float v = Rml::Get(parameters, "value", 1.f), rv = 1.f - v;
     fd->color_matrix = LMatrix4f(
-      v*0.393f + rv, v*0.769f,       v*0.189f,       0,
-      v*0.349f,      v*0.686f + rv,  v*0.168f,       0,
-      v*0.272f,      v*0.534f,       v*0.131f + rv,  0,
-      0,             0,              0,              1);
+      v*0.393f+rv, v*0.769f,       v*0.189f,       0,
+      v*0.349f,    v*0.686f+rv,    v*0.168f,       0,
+      v*0.272f,    v*0.534f,       v*0.131f+rv,    0,
+      0,           0,              0,              1);
   }
   else if (name == "hue-rotate") {
     fd->type = FilterType::ColorMatrix;
     float a = Rml::Get(parameters, "value", 0.f);
     float s = sinf(a), c = cosf(a);
     fd->color_matrix = LMatrix4f(
-      0.213f + 0.787f*c - 0.213f*s,  0.715f - 0.715f*c - 0.715f*s,  0.072f - 0.072f*c + 0.928f*s,  0,
-      0.213f - 0.213f*c + 0.143f*s,  0.715f + 0.285f*c + 0.140f*s,  0.072f - 0.072f*c - 0.283f*s,  0,
-      0.213f - 0.213f*c - 0.787f*s,  0.715f - 0.715f*c + 0.715f*s,  0.072f + 0.928f*c + 0.072f*s,  0,
-      0, 0, 0, 1);
+      0.213f+0.787f*c-0.213f*s, 0.715f-0.715f*c-0.715f*s, 0.072f-0.072f*c+0.928f*s, 0,
+      0.213f-0.213f*c+0.143f*s, 0.715f+0.285f*c+0.140f*s, 0.072f-0.072f*c-0.283f*s, 0,
+      0.213f-0.213f*c-0.787f*s, 0.715f-0.715f*c+0.715f*s, 0.072f+0.928f*c+0.072f*s, 0,
+      0,                         0,                         0,                         1);
   }
   else if (name == "saturate") {
     fd->type = FilterType::ColorMatrix;
     float v = Rml::Get(parameters, "value", 1.f);
     fd->color_matrix = LMatrix4f(
-      0.213f + 0.787f*v,  0.715f - 0.715f*v,  0.072f - 0.072f*v,  0,
-      0.213f - 0.213f*v,  0.715f + 0.285f*v,  0.072f - 0.072f*v,  0,
-      0.213f - 0.213f*v,  0.715f - 0.715f*v,  0.072f + 0.928f*v,  0,
-      0, 0, 0, 1);
+      0.213f+0.787f*v, 0.715f-0.715f*v, 0.072f-0.072f*v, 0,
+      0.213f-0.213f*v, 0.715f+0.285f*v, 0.072f-0.072f*v, 0,
+      0.213f-0.213f*v, 0.715f-0.715f*v, 0.072f+0.928f*v, 0,
+      0,               0,               0,               1);
   }
   else {
     delete fd;
     rmlui_cat.warning() << "Unknown filter '" << name << "'\n";
     return 0;
   }
-
   return reinterpret_cast<Rml::CompiledFilterHandle>(fd);
 }
 
@@ -1072,9 +1100,9 @@ ReleaseFilter(Rml::CompiledFilterHandle filter) {
   delete reinterpret_cast<CompiledFilterData *>(filter);
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // CompileShader / RenderShader / ReleaseShader
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 Rml::CompiledShaderHandle RmlRenderInterface::
 CompileShader(const Rml::String &name, const Rml::Dictionary &parameters) {
@@ -1088,12 +1116,11 @@ CompileShader(const Rml::String &name, const Rml::Dictionary &parameters) {
       it->second.GetReference<Rml::ColorStopList>();
     int n = std::min((int)stops.size(), MAX_STOPS);
     sd->num_stops = n;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; ++i) {
       sd->stop_positions[i] = stops[i].position.number;
-      // ColorStop::color is ColourbPremultiplied (0-255 premultiplied).
       const auto &c = stops[i].color;
-      sd->stop_colors[i] = LVecBase4f(c.red / 255.f, c.green / 255.f,
-                                       c.blue / 255.f, c.alpha / 255.f);
+      sd->stop_colors[i] = LVecBase4f(
+        c.red/255.f, c.green/255.f, c.blue/255.f, c.alpha/255.f);
     }
   };
 
@@ -1111,19 +1138,19 @@ CompileShader(const Rml::String &name, const Rml::Dictionary &parameters) {
     sd->type = ShaderType::Gradient;
     bool rep = Rml::Get(parameters, "repeating", false);
     sd->gradient_func = rep ? GradientFunc::RepeatingRadial : GradientFunc::Radial;
-    Rml::Vector2f center = Rml::Get(parameters, "center", Rml::Vector2f(0.f));
-    Rml::Vector2f radius = Rml::Get(parameters, "radius", Rml::Vector2f(1.f));
-    sd->p = LVecBase2f(center.x, center.y);
-    sd->v = LVecBase2f(1.f / radius.x, 1.f / radius.y);
+    Rml::Vector2f c  = Rml::Get(parameters, "center", Rml::Vector2f(0.f));
+    Rml::Vector2f r  = Rml::Get(parameters, "radius", Rml::Vector2f(1.f));
+    sd->p = LVecBase2f(c.x, c.y);
+    sd->v = LVecBase2f(1.f/r.x, 1.f/r.y);
     load_stops(parameters);
   }
   else if (name == "conic-gradient") {
     sd->type = ShaderType::Gradient;
     bool rep = Rml::Get(parameters, "repeating", false);
     sd->gradient_func = rep ? GradientFunc::RepeatingConic : GradientFunc::Conic;
-    Rml::Vector2f center = Rml::Get(parameters, "center", Rml::Vector2f(0.f));
-    float angle = Rml::Get(parameters, "angle", 0.f);
-    sd->p = LVecBase2f(center.x, center.y);
+    Rml::Vector2f c = Rml::Get(parameters, "center", Rml::Vector2f(0.f));
+    float angle     = Rml::Get(parameters, "angle", 0.f);
+    sd->p = LVecBase2f(c.x, c.y);
     sd->v = LVecBase2f(cosf(angle), sinf(angle));
     load_stops(parameters);
   }
@@ -1144,7 +1171,6 @@ CompileShader(const Rml::String &name, const Rml::Dictionary &parameters) {
     rmlui_cat.warning() << "Unknown shader '" << name << "'\n";
     return 0;
   }
-
   return reinterpret_cast<Rml::CompiledShaderHandle>(sd);
 }
 
@@ -1154,6 +1180,8 @@ RenderShader(Rml::CompiledShaderHandle shader_handle,
              Rml::Vector2f translation,
              Rml::TextureHandle /*texture*/) {
   if (!shader_handle || !geometry_handle) return;
+  ensure_shaders();
+
   const CompiledShaderData &sd =
     *reinterpret_cast<const CompiledShaderData *>(shader_handle);
   const CompiledGeometry *cg =
@@ -1162,50 +1190,42 @@ RenderShader(Rml::CompiledShaderHandle shader_handle,
   CPT(RenderState) state;
 
   switch (sd.type) {
-
   case ShaderType::Gradient: {
     state = _shader_gradient;
     CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
-
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
       InternalName::make("u_func"), LVecBase4f((float)sd.gradient_func, 0, 0, 0));
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_p"), LVecBase2f(sd.p));
+      InternalName::make("u_p"), sd.p);
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_v"), LVecBase2f(sd.v));
+      InternalName::make("u_v"), sd.v);
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
       InternalName::make("u_num_stops"), LVecBase4f((float)sd.num_stops, 0, 0, 0));
-
-    PTA_LVecBase4f stop_colors;
-    for (int i = 0; i < sd.num_stops; i++) stop_colors.push_back(sd.stop_colors[i]);
+    PTA_LVecBase4f colors;
+    PTA_float positions;
+    for (int i = 0; i < sd.num_stops; ++i) {
+      colors.push_back(sd.stop_colors[i]);
+      positions.push_back(sd.stop_positions[i]);
+    }
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_stop_colors"), stop_colors);
-
-    PTA_float stop_positions;
-    for (int i = 0; i < sd.num_stops; i++) stop_positions.push_back(sd.stop_positions[i]);
+      InternalName::make("u_stop_colors"), colors);
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_stop_positions"), stop_positions);
-
+      InternalName::make("u_stop_positions"), positions);
     state = state->add_attrib(sa);
     break;
   }
-
   case ShaderType::Creation: {
     state = _shader_creation;
     CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
-
     float t = (float)Rml::GetSystemInterface()->GetElapsedTime();
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
       InternalName::make("u_time"), LVecBase4f(t, 0, 0, 0));
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_dimensions"), LVecBase2f(sd.dimensions));
-
+      InternalName::make("u_dimensions"), sd.dimensions);
     state = state->add_attrib(sa);
     break;
   }
-
-  default:
-    return;
+  default: return;
   }
 
   render_geom(cg->_geom, state, translation);
@@ -1214,16 +1234,4 @@ RenderShader(Rml::CompiledShaderHandle shader_handle,
 void RmlRenderInterface::
 ReleaseShader(Rml::CompiledShaderHandle shader_handle) {
   delete reinterpret_cast<CompiledShaderData *>(shader_handle);
-}
-
-// ---------------------------------------------------------------------------
-// composite_quad — used internally
-// ---------------------------------------------------------------------------
-
-void RmlRenderInterface::
-composite_quad(const RenderState *state) {
-  CPT(Geom) quad = make_fullscreen_quad();
-  CPT(TransformState) ident = _trav->get_scene()->get_cs_world_transform();
-  CullableObject obj(quad, state, ident);
-  _trav->get_cull_handler()->record_object(std::move(obj), _trav);
 }
