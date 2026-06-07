@@ -75,6 +75,7 @@ class FeatureDemo(ShowBase):
 
         self._cache_elements()
         self._wire_events()
+        self._wire_tab_debug()
 
     def _cache_elements(self):
         """Cache frequently-updated elements to avoid repeated getElementById calls."""
@@ -124,6 +125,38 @@ class FeatureDemo(ShowBase):
         self.accept("escape", self.userExit)
         self.accept("f1", lambda: self.rml.setDebuggerVisible(
             not self.rml.isDebuggerVisible()))
+        self.accept("mouse1", self._on_click_debug)
+
+    def _wire_tab_debug(self):
+        """Wire click events on each <tab> element for position debugging."""
+        ctx = self.rml.getContext()
+        doc = self._doc
+        # Tab elements are children of the <tabs> container inside <tabset>
+        tabset = doc.getElementById("tabs")
+        if tabset is None:
+            print("[debug] tabset #tabs not found")
+            return
+        # Walk children to find <tab> elements
+        # RmlElement doesn't expose childNodes yet, so we wire by tag via
+        # a workaround: attach a click listener to the tabset and inspect x/y.
+        tabset.addEventListener("click", "rmlui-tab-click")
+        self.accept("rmlui-tab-click", self._on_tab_click_debug)
+        print("[debug] tab click wiring done; click a tab to see its event")
+
+    def _on_click_debug(self):
+        """Print pixel coords of every left mouse click."""
+        if self.mouseWatcherNode.hasMouse():
+            mx = self.mouseWatcherNode.getMouseX()
+            my = self.mouseWatcherNode.getMouseY()
+            # Convert from [-1,1] to pixel coords
+            w = self.win.getXSize()
+            h = self.win.getYSize()
+            px = int((mx + 1) * 0.5 * w)
+            py = int((1 - my) * 0.5 * h)
+            print(f"[click] pixel=({px}, {py})  norm=({mx:.3f}, {my:.3f})")
+
+    def _on_tab_click_debug(self):
+        print("[click] RmlUi tab/tabset received 'click' event — RmlUi hit-test fired OK")
 
     # ------------------------------------------------------------------
     # Event handlers

@@ -47,9 +47,10 @@
 // ===========================================================================
 // Embedded GLSL shader sources
 //
-// All shaders target GLSL 330 with explicit layout(binding=N) so they compile
-// correctly through glslang → SPIR-V and survive SPIRV-Cross on both the GL
-// and Vulkan backends.  No raw GL calls anywhere.
+// All shaders target GLSL 330 core.  No layout(binding=N) on samplers —
+// macOS OpenGL 4.1 doesn't support ARB_shading_language_420pack.
+// p3d_Texture0 is auto-bound by Panda from TextureAttrib stage 0.
+// Custom samplers (u_mask_tex etc.) are bound via set_shader_input.
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -68,7 +69,7 @@ void main() {
 
 static const char *s_frag_passthrough = R"GLSL(
 #version 330
-layout(binding=0) uniform sampler2D p3d_Texture0;
+uniform sampler2D p3d_Texture0;
 uniform float u_blend_factor;
 in  vec2 v_uv;
 out vec4 o_color;
@@ -82,7 +83,7 @@ void main() {
 // ---------------------------------------------------------------------------
 static const char *s_frag_color_matrix = R"GLSL(
 #version 330
-layout(binding=0) uniform sampler2D p3d_Texture0;
+uniform sampler2D p3d_Texture0;
 uniform mat4 u_color_matrix;
 in  vec2 v_uv;
 out vec4 o_color;
@@ -97,8 +98,8 @@ void main() {
 // ---------------------------------------------------------------------------
 static const char *s_frag_blend_mask = R"GLSL(
 #version 330
-layout(binding=0) uniform sampler2D p3d_Texture0;
-layout(binding=1) uniform sampler2D u_mask_tex;
+uniform sampler2D p3d_Texture0;
+uniform sampler2D u_mask_tex;
 in  vec2 v_uv;
 out vec4 o_color;
 void main() {
@@ -113,7 +114,7 @@ void main() {
 // ---------------------------------------------------------------------------
 static const char *s_frag_drop_shadow = R"GLSL(
 #version 330
-layout(binding=0) uniform sampler2D p3d_Texture0;
+uniform sampler2D p3d_Texture0;
 uniform vec4  u_shadow_color;
 uniform vec2  u_offset;
 uniform vec2  u_inv_size;
@@ -150,7 +151,7 @@ void main() {
 
 static const char *s_frag_blur = R"GLSL(
 #version 330
-layout(binding=0) uniform sampler2D p3d_Texture0;
+uniform sampler2D p3d_Texture0;
 uniform float u_weights[4];
 uniform vec2  u_uv_min;
 uniform vec2  u_uv_max;
@@ -160,7 +161,7 @@ void main() {
     o_color = vec4(0.0);
     for (int i = 0; i < 7; i++) {
         vec2 in_r = step(u_uv_min, v_uv[i]) * step(v_uv[i], u_uv_max);
-        int  wi   = abs(i - 3);
+        int  wi   = (i < 3) ? (3 - i) : (i - 3);
         o_color  += texture(p3d_Texture0, v_uv[i])
                     * in_r.x * in_r.y * u_weights[wi];
     }
@@ -175,15 +176,13 @@ static const char *s_vert_ui = R"GLSL(
 layout(location=0) in vec2 p3d_Vertex;
 layout(location=3) in vec4 p3d_Color;
 layout(location=4) in vec2 p3d_MultiTexCoord0;
-uniform vec2 u_translate;
-uniform mat4 u_transform;
+uniform mat4 p3d_ModelViewProjectionMatrix;
 out vec2 v_uv;
 out vec4 v_color;
 void main() {
     v_uv    = p3d_MultiTexCoord0;
     v_color = p3d_Color;
-    vec2 p  = p3d_Vertex + u_translate;
-    gl_Position = u_transform * vec4(p, 0.0, 1.0);
+    gl_Position = p3d_ModelViewProjectionMatrix * vec4(p3d_Vertex, 0.0, 1.0);
 }
 )GLSL";
 
@@ -278,7 +277,7 @@ static void compute_blur_weights(float sigma, float out[BLUR_WEIGHTS]) {
 }
 
 // Build a fullscreen NDC quad (positions -1..1, UVs 0..1).
-static CPT(Geom) make_fullscreen_quad() {
+static CPT(Geom) build_fullscreen_quad() {
   struct V { float x, y, u, v; };
   static const V verts[4] = {
     {-1.f,-1.f, 0.f, 0.f},
@@ -371,8 +370,6 @@ init(GraphicsOutput *window) {
       std::string("rmlui-scratch-") + std::to_string(i));
     if (_scratch[i]) _scratch[i]->in_use = true; // never returned to pool
   }
-  _mask_lb = make_layer_buffer(window, "rmlui-mask");
-  if (_mask_lb) _mask_lb->in_use = true;
 }
 
 // ===========================================================================
@@ -470,9 +467,9 @@ begin_layer(LayerBuffer *lb) {
   lb->frame_open = true;
 
   // Clear to transparent black.
+  lb->buf->clear(_thread);
   DisplayRegionPipelineReader dr_reader(lb->dr, _thread);
   _gsg->prepare_display_region(&dr_reader);
-  _gsg->clear(lb->dr);
 }
 
 void RmlRenderInterface::
@@ -526,6 +523,7 @@ render(Rml::Context *context, CullTraverser *trav,
     ColorAttrib::make_vertex()
   );
   _dimensions = context->GetDimensions();
+  _css_transform = nullptr;
 
   _layer_stack.clear();
   LayerEntry base;
@@ -578,7 +576,14 @@ make_geom(Rml::Span<const Rml::Vertex> vertices,
                   LVector3f::up()    * v.position.y);
     cw.add_data4i(v.colour.red, v.colour.green,
                   v.colour.blue, v.colour.alpha);
-    tw.add_data2f(v.tex_coord.x, 1.0f - v.tex_coord.y);
+    // Pass tex_coords verbatim.  RmlUi uses two conventions:
+    //   • image textures:  0..1 normalised, (0,0)=top-left (CSS).
+    //   • shader geometry: pixel-space position (gradient p0/p1 coords).
+    // Both conventions share the same CSS y-down direction.  The GL3
+    // reference renderer also passes tex_coords unchanged.  Image textures
+    // are loaded with set_flip_y(true) so their (0,0) is already top-left
+    // from Panda's perspective, making the UVs consistent.
+    tw.add_data2f(v.tex_coord.x, v.tex_coord.y);
   }
 
   PT(GeomTriangles) tris = new GeomTriangles(uh);
@@ -607,9 +612,14 @@ render_geom(const Geom *geom, const RenderState *state, Rml::Vector2f translatio
     full = full->add_attrib(ScissorAttrib::make(sc));
   }
 
+  // _css_transform is set by SetTransform() for CSS transform: properties.
+  CPT(TransformState) model =
+    _css_transform != nullptr
+      ? _css_transform->compose(TransformState::make_pos(off))
+      : TransformState::make_pos(off);
   CPT(TransformState) xform =
     _trav->get_scene()->get_cs_world_transform()->compose(
-      _net_transform->compose(TransformState::make_pos(off)));
+      _net_transform->compose(model));
 
   CullableObject obj(geom, full, xform);
   _trav->get_cull_handler()->record_object(std::move(obj), _trav);
@@ -624,9 +634,13 @@ composite_quad(CPT(RenderState) state, PT(Texture) tex) {
       InternalName::make("p3d_Texture0"), tex);
     state = state->add_attrib(sa);
   }
-  CPT(Geom) quad = make_fullscreen_quad();
+  // Apply the same global state as render_geom so the quad lands in the right
+  // render bin and has consistent depth/cull state.
+  state = _net_state->compose(state);
+
+  if (_fsq == nullptr) _fsq = build_fullscreen_quad();
   CPT(TransformState) ident = _trav->get_scene()->get_cs_world_transform();
-  CullableObject obj(quad, state, ident);
+  CullableObject obj(_fsq, state, ident);
   _trav->get_cull_handler()->record_object(std::move(obj), _trav);
 }
 
@@ -682,8 +696,24 @@ LoadTexture(Rml::Vector2i &texture_dimensions, const Rml::String &source) {
     Filename::from_os_specific(source), 0, false, opts);
   if (!tex) { texture_dimensions = {0,0}; return 0; }
 
-  tex->set_minfilter(SamplerState::FT_nearest);
-  tex->set_magfilter(SamplerState::FT_nearest);
+  // Flip Y in RAM so UV (0,0) maps to image top-left (CSS convention).
+  // make_geom passes tex_coords verbatim; this keeps image and shader
+  // geometry on the same coordinate convention.
+  if (tex->has_ram_image()) {
+    int xsize = tex->get_x_size();
+    int ysize = tex->get_y_size();
+    int row   = xsize * tex->get_num_components(); // bytes per row
+    PTA_uchar img = tex->modify_ram_image();
+    unsigned char *data = &img[0];
+    for (int y = 0; y < ysize / 2; ++y) {
+      unsigned char *a = data + y * row;
+      unsigned char *b = data + (ysize - 1 - y) * row;
+      for (int x = 0; x < row; ++x) std::swap(a[x], b[x]);
+    }
+  }
+
+  tex->set_minfilter(SamplerState::FT_linear);
+  tex->set_magfilter(SamplerState::FT_linear);
 
   int w = tex->get_orig_file_x_size();
   int h = tex->get_orig_file_y_size();
@@ -740,6 +770,30 @@ SetScissorRegion(Rml::Rectanglei region) {
   _scissor_rect = region;
 }
 
+// RmlUi calls SetTransform when a CSS transform: property is active.
+// nullptr means identity — reset to no extra transform.
+//
+// Matrix4f is ColumnMajorMatrix4f (RMLUI_MATRIX_ROW_MAJOR not defined).
+// data() returns elements column-by-column: d[0..3]=col0, d[4..7]=col1, …
+// Reading d[0],d[4],d[8],d[12] as Panda row 0 extracts the first element of
+// each column, which is equivalent to transposing the Rml matrix.  Panda then
+// re-transposes to column-major on upload, so the round-trip is identity —
+// the same matrix values reach GLSL as were in the Rml Matrix4f.
+void RmlRenderInterface::
+SetTransform(const Rml::Matrix4f *transform) {
+  if (transform == nullptr) {
+    _css_transform = nullptr;
+    return;
+  }
+  const float *d = transform->data();
+  LMatrix4f mat(
+    d[ 0], d[ 4], d[ 8], d[12],
+    d[ 1], d[ 5], d[ 9], d[13],
+    d[ 2], d[ 6], d[10], d[14],
+    d[ 3], d[ 7], d[11], d[15]);
+  _css_transform = TransformState::make_mat(mat);
+}
+
 // ===========================================================================
 // Layer interface — PushLayer / CompositeLayers / PopLayer
 // ===========================================================================
@@ -779,15 +833,25 @@ CompositeLayers(Rml::LayerHandle source_handle,
 
   LayerBuffer *src_lb  = get_layer(source_handle);
   LayerBuffer *dest_lb = get_layer(destination_handle);
-
   if (src_lb == nullptr || !src_lb->frame_open) return;
 
   // End the source layer's frame → texture is now ready.
-  // Rebind destination so compositing goes to the right FBO.
-  end_layer(src_lb, dest_lb);
+  end_layer(src_lb, nullptr);
 
-  // Apply filter chain in ping-pong.
+  // Apply filter chain in ping-pong (ping-pong uses scratch buffers and always
+  // leaves the main window bound on exit).
   PT(Texture) result = apply_filters(src_lb->tex, filters);
+
+  // Rebind the destination FBO so the composite quad goes to the right target.
+  if (dest_lb != nullptr) {
+    if (!dest_lb->frame_open) {
+      dest_lb->buf->begin_frame(GraphicsOutput::FM_render, _thread);
+      dest_lb->frame_open = true;
+    }
+    DisplayRegionPipelineReader dr_reader(dest_lb->dr, _thread);
+    _gsg->prepare_display_region(&dr_reader);
+  }
+  // else: main window is already active from end_layer(src_lb, nullptr) above.
 
   // Build compositing state.
   CPT(RenderState) state = _shader_passthrough;
@@ -842,18 +906,33 @@ SaveLayerAsTexture() {
   LayerBuffer *lb = get_layer(top.handle);
   if (!lb || !lb->tex) return 0;
 
-  // Snapshot the current layer: end frame to flush the texture, allocate a
-  // new layer for subsequent rendering, start its frame.
+  // Flush the current layer so its texture is up-to-date.
+  if (lb->frame_open) {
+    lb->buf->end_frame(GraphicsOutput::FM_render, _thread);
+    lb->frame_open = false;
+  }
+
+  // Blit lb's texture into a scratch snapshot buffer.
   LayerBuffer *snap_lb = alloc_layer();
   if (!snap_lb) return 0;
 
-  if (lb->frame_open) {
-    // End lb → snap_lb; we'll restart lb's frame for future rendering.
-    end_layer(lb, snap_lb);
-    begin_layer(lb);
-  }
+  begin_layer(snap_lb);
+  CPT(RenderState) st = _shader_passthrough;
+  CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
+  sa = DCAST(ShaderAttrib, sa)->set_shader_input(
+    InternalName::make("u_blend_factor"), LVecBase4f(1.f));
+  st = st->add_attrib(sa);
+  composite_quad(st, lb->tex);
+  end_layer(snap_lb, nullptr);
 
+  // Restart lb so the caller can keep rendering into it.
+  begin_layer(lb);
+
+  // Return snap_lb to the pool; the tex ref keeps the GPU texture alive
+  // independently of the LayerBuffer.  ReleaseTexture will drop the ref.
   snap_lb->tex->ref();
+  free_layer(snap_lb);
+
   return (Rml::TextureHandle)snap_lb->tex.p();
 }
 
@@ -1027,8 +1106,10 @@ CompileFilter(const Rml::String &name, const Rml::Dictionary &parameters) {
   else if (name == "drop-shadow") {
     fd->type  = FilterType::DropShadow;
     fd->sigma = Rml::Get(parameters, "sigma", 0.f);
+    // Premultiply alpha to match the premultiplied-alpha render pipeline.
     Rml::Colourb c = Rml::Get(parameters, "color", Rml::Colourb());
-    fd->color = LColor(c.red/255.f, c.green/255.f, c.blue/255.f, c.alpha/255.f);
+    float a = c.alpha / 255.f;
+    fd->color = LColor(c.red/255.f * a, c.green/255.f * a, c.blue/255.f * a, a);
     Rml::Vector2f off = Rml::Get(parameters, "offset", Rml::Vector2f(0.f));
     fd->offset = LVecBase2f(off.x, off.y);
   }

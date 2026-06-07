@@ -80,6 +80,7 @@ public:
 
   void EnableScissorRegion(bool enable) override;
   void SetScissorRegion(Rml::Rectanglei region) override;
+  void SetTransform(const Rml::Matrix4f *transform) override;
 
   // -----------------------------------------------------------------------
   // Optional Rml::RenderInterface — layers / filters / shaders
@@ -204,15 +205,15 @@ private:
   // Two scratch buffers for ping-pong compositing within apply_filters().
   LayerBuffer *_scratch[2] = { nullptr, nullptr };
 
-  // Mask buffer (SaveLayerAsMaskImage).
-  LayerBuffer *_mask_lb = nullptr;
-
   // Current layer stack.  Bottom entry is the base layer (handle=0).
   pvector<LayerEntry> _layer_stack;
 
   // Scissor state.
   bool            _scissor_active = false;
   Rml::Rectanglei _scissor_rect;
+
+  // CSS transform: set by SetTransform(); nullptr = identity.
+  CPT(TransformState) _css_transform;
 
   // Per-frame state, filled by render() and cleared after Context::Render().
   CullTraverser          *_trav         = nullptr;
@@ -221,6 +222,9 @@ private:
   CPT(TransformState)     _net_transform;
   CPT(RenderState)        _net_state;
   Rml::Vector2i           _dimensions;
+
+  // Cached fullscreen quad (built once on first composite_quad call).
+  CPT(Geom) _fsq;
 
   // Shader programs (compiled once on first use).
   bool _shaders_ready = false;

@@ -249,6 +249,10 @@ update_context(Rml::Context *context, int xoffs, int yoffs) {
 
   for (auto &[btn, down] : _mouse_buttons) {
     if (down) {
+      rmlui_cat.debug()
+        << "MouseButtonDown btn=" << btn
+        << " at rml=(" << (int)_mouse_xy.get_x() - xoffs
+        << ", " << (int)_mouse_xy.get_y() - yoffs << ")\n";
       context->ProcessMouseButtonDown(btn, _modifiers);
     } else {
       context->ProcessMouseButtonUp(btn, _modifiers);
