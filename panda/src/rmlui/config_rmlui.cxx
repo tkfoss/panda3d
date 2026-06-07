@@ -20,6 +20,13 @@
 #include "rmlFileInterface.h"
 #include "rmlSystemInterface.h"
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/StyleTypes.h>
+#endif
+
+#ifdef COMPILE_IN_DEFAULT_FONT
+#ifdef HAVE_FREETYPE
+#include "default_font.h"
+#endif
 #endif
 
 #include "pandaSystem.h"
@@ -70,6 +77,21 @@ init_librmlui() {
   Rml::SetSystemInterface(&si);
 
   Rml::Initialise();
+
+#ifdef COMPILE_IN_DEFAULT_FONT
+#ifdef HAVE_FREETYPE
+  // Load Panda's compiled-in default font (Perspective Sans) so that RmlUi
+  // has at least one font available without any user configuration.
+  Rml::LoadFontFace(
+    Rml::Span<const Rml::byte>(
+      reinterpret_cast<const Rml::byte *>(default_font_data),
+      default_font_size),
+    "Panda Default",
+    Rml::Style::FontStyle::Normal,
+    Rml::Style::FontWeight::Normal,
+    true);  // fallback_face = true
+#endif
+#endif
 
   PandaSystem *ps = PandaSystem::get_global_ptr();
   ps->add_system("RmlUi");

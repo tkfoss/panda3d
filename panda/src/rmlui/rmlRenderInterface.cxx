@@ -733,10 +733,11 @@ GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dims) {
   PTA_uchar img = tex->modify_ram_image();
   size_t src_stride = dims.x * 4;
   size_t dst_stride = tex->get_x_size() * 4;
-  const unsigned char *src = source.data() + src_stride * dims.y;
+  const unsigned char *src = source.data();
   unsigned char *dst = &img[0];
-  for (; src > source.data(); dst += dst_stride) {
-    src -= src_stride;
+  // RmlUi supplies RGBA; Panda stores BGR(A) on little-endian, so swap R/B.
+  // No Y-flip: make_geom passes tex_coords verbatim (CSS y-down convention).
+  for (int y = 0; y < dims.y; ++y, src += src_stride, dst += dst_stride) {
     for (size_t i = 0; i < src_stride; i += 4) {
       dst[i+0] = src[i+2]; dst[i+1] = src[i+1];
       dst[i+2] = src[i+0]; dst[i+3] = src[i+3];
