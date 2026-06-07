@@ -12,10 +12,14 @@
  */
 
 #include "config_rmlui.h"
-#include "rmlFileInterface.h"
 #include "rmlInputHandler.h"
 #include "rmlRegion.h"
+
+#ifndef CPPPARSER
+#include "rmlFileInterface.h"
 #include "rmlSystemInterface.h"
+#include <RmlUi/Core/Core.h>
+#endif
 
 #include "pandaSystem.h"
 #include "dconfig.h"

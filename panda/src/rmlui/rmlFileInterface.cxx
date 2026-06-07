@@ -34,19 +34,19 @@ Open(const Rml::String &path) {
     if (!_vfs->resolve_filename(fn, get_model_path())) {
       rmlui_cat.error() << "Could not resolve " << fn
         << " along the model-path\n";
-      return nullptr;
+      return 0;
     }
     file = _vfs->get_file(fn);
     if (file == nullptr) {
       rmlui_cat.error() << "Failed to get " << fn << "\n";
-      return nullptr;
+      return 0;
     }
   }
 
   std::istream *str = file->open_read_file(true);
   if (str == nullptr) {
     rmlui_cat.error() << "Failed to open " << fn << " for reading\n";
-    return nullptr;
+    return 0;
   }
 
   VirtualFileHandle *handle = new VirtualFileHandle;

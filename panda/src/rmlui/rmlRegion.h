@@ -16,8 +16,11 @@
 
 #include "config_rmlui.h"
 #include "displayRegion.h"
-#include "rmlRenderInterface.h"
 #include "rmlInputHandler.h"
+
+#ifndef CPPPARSER
+#include "rmlRenderInterface.h"
+#endif
 
 class OrthographicLens;
 
@@ -65,9 +68,8 @@ PUBLISHED:
   MAKE_PROPERTY(debugger_visible, is_debugger_visible, set_debugger_visible);
 
 private:
-  RmlRenderInterface _interface;
-
 #ifndef CPPPARSER
+  RmlRenderInterface _interface;
   Rml::Context *_context = nullptr;
 #endif
 

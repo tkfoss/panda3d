@@ -120,8 +120,8 @@ render_geom(const Geom *geom, const RenderState *state, Rml::Vector2f translatio
     _trav->get_scene()->get_cs_world_transform()->compose(
       _net_transform->compose(TransformState::make_pos(offset)));
 
-  CullableObject *obj = new CullableObject(geom, full_state, xform);
-  _trav->get_cull_handler()->record_object(obj, _trav);
+  CullableObject obj(geom, full_state, xform);
+  _trav->get_cull_handler()->record_object(std::move(obj), _trav);
 }
 
 // ---------------------------------------------------------------------------

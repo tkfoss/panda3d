@@ -24,7 +24,10 @@ composite_sources(p3rmlui P3RMLUI_SOURCES)
 add_library(p3rmlui ${P3RMLUI_SOURCES} ${P3RMLUI_HEADERS})
 set_target_properties(p3rmlui PROPERTIES DEFINE_SYMBOL BUILDING_PANDARMUI)
 target_link_libraries(p3rmlui panda RmlUi::RmlUi)
-target_interrogate(p3rmlui ALL)
+# Only interrogate the files with PUBLISHED: annotations; the interface
+# adapter files (rmlFileInterface, rmlRenderInterface, rmlSystemInterface)
+# contain Rml:: types that the CPPPARSER cannot resolve.
+target_interrogate(p3rmlui config_rmlui.cxx rmlInputHandler.cxx rmlRegion.cxx)
 
 if(HAVE_RMLUI_DEBUGGER)
   target_compile_definitions(p3rmlui PRIVATE HAVE_RMLUI_DEBUGGER)

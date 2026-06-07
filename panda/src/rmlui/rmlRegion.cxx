@@ -16,11 +16,12 @@
 #include "orthographicLens.h"
 #include "pStatTimer.h"
 
+#ifndef CPPPARSER
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Context.h>
-
 #ifdef HAVE_RMLUI_DEBUGGER
 #include <RmlUi/Debugger.h>
+#endif
 #endif
 
 TypeHandle RmlRegion::_type_handle;
