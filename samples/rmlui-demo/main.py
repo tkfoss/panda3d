@@ -87,6 +87,10 @@ class Demo(ShowBase):
         self._doc = ctx.loadDocument(os.path.join(ASSETS, "demo.rml"))
         if self._doc:
             self._doc.show()
+            btn = self._doc.getElementById("btn-click")
+            if btn:
+                btn.addEventListener("click", "rmlui-btn-click")
+                self.accept("rmlui-btn-click", self.on_button)
 
         self._ctx = ctx
 
@@ -107,7 +111,6 @@ class Demo(ShowBase):
     def _toggle_debugger(self):
         self.rml_region.setDebuggerVisible(not self.rml_region.isDebuggerVisible())
 
-    # Called from RML inline script: document.context.app.on_button()
     def on_button(self):
         self._click_count += 1
 

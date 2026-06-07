@@ -19,6 +19,9 @@
 
 #ifndef CPPPARSER
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/EventListener.h>
+#include <string>
+#include <vector>
 #endif
 
 /**
@@ -38,6 +41,13 @@ PUBLISHED:
   void click();
   void focus();
 
+  // Attach a named Panda3D event that fires when this element receives
+  // the given DOM event (e.g. "click").  The event name thrown on the
+  // Panda3D Messenger is panda_event.  Listeners accumulate; call again
+  // with a different dom_event/panda_event to attach more.
+  void add_event_listener(const std::string &dom_event,
+                          const std::string &panda_event);
+
   MAKE_PROPERTY(id, get_id);
   MAKE_PROPERTY(inner_rml, get_inner_rml, set_inner_rml);
 
@@ -46,8 +56,19 @@ public:
 #ifndef CPPPARSER
   explicit RmlElement(Rml::Element *el) : _el(el) {}
   Rml::Element *get_raw() const { return _el; }
+
+  ~RmlElement();
+
 protected:
   Rml::Element *_el = nullptr;
+
+  struct PandaEventListener : public Rml::EventListener {
+    std::string panda_event;
+    explicit PandaEventListener(const std::string &ev) : panda_event(ev) {}
+    void ProcessEvent(Rml::Event &) override;
+    void OnDetach(Rml::Element *) override { delete this; }
+  };
+  std::vector<PandaEventListener *> _listeners;
 #endif
 };
 

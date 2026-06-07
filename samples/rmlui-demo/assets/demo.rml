@@ -24,7 +24,7 @@
 
     <div id="counter-box">
       <p>Button clicks: <span id="count">0</span></p>
-      <button onclick="document.context.app.on_button()">Click me</button>
+      <button id="btn-click">Click me</button>
     </div>
   </div>
 </body>

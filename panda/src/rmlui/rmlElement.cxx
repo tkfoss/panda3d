@@ -12,6 +12,7 @@
  */
 
 #include "rmlElement.h"
+#include "throw_event.h"
 #include <RmlUi/Core/Element.h>
 
 std::string RmlElement::
@@ -57,4 +58,22 @@ click() {
 void RmlElement::
 focus() {
   _el->Focus();
+}
+
+void RmlElement::
+add_event_listener(const std::string &dom_event, const std::string &panda_event) {
+  auto *listener = new PandaEventListener(panda_event);
+  _listeners.push_back(listener);
+  _el->AddEventListener(dom_event, listener);
+}
+
+RmlElement::
+~RmlElement() {
+  // Listeners are self-deleting via OnDetach; just clear our references.
+  _listeners.clear();
+}
+
+void RmlElement::PandaEventListener::
+ProcessEvent(Rml::Event &) {
+  throw_event(panda_event);
 }
