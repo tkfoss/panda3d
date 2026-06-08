@@ -39,7 +39,7 @@ endif()
 # Only interrogate the files with PUBLISHED: annotations; the interface
 # adapter files (rmlFileInterface, rmlRenderInterface, rmlSystemInterface)
 # contain Rml:: types that the CPPPARSER cannot resolve.
-target_interrogate(p3rmlui config_rmlui.cxx rmlInputHandler.cxx rmlRegion.cxx rmlContext.cxx rmlDataModel.cxx rmlDocument.cxx rmlElement.cxx)
+target_interrogate(p3rmlui config_rmlui.h rmlInputHandler.h rmlRegion.h rmlContext.h rmlDocument.h rmlElement.h rmlDataModel.h)
 
 if(HAVE_RMLUI_DEBUGGER)
   target_compile_definitions(p3rmlui PRIVATE HAVE_RMLUI_DEBUGGER)

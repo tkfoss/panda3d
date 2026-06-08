@@ -72,3 +72,4 @@ __pycache__/
 /.settings/
 /.cproject
 /.project
+build_cmake/

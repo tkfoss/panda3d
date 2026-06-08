@@ -18,6 +18,7 @@
 #include "displayRegion.h"
 #include "rmlInputHandler.h"
 #include "rmlContext.h"
+#include "graphicsOutput.h"
 
 #ifndef CPPPARSER
 #include "rmlRenderInterface.h"
