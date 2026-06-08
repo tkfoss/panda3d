@@ -52,11 +52,13 @@ private:
   int _modifiers = 0;
   float _wheel_delta = 0.0f;
 
-  typedef pmap<int, bool> ButtonActivityMap;
-  ButtonActivityMap _mouse_buttons;
-  ButtonActivityMap _keys;
+  // Ordered event queues — preserves press/release sequence within a frame.
+  // Using pvector<pair> instead of a map so that a fast tap (T_down + T_up
+  // in the same data-graph tick) delivers both ProcessKeyDown and ProcessKeyUp.
+  pvector<std::pair<int, bool>> _key_events;
+  pvector<std::pair<int, bool>> _mouse_button_events;
   pvector<int> _repeated_keys;
-  pvector<int> _text_input; // Unicode codepoints
+  pvector<int> _text_input;
 
 public:
   static TypeHandle get_class_type() {

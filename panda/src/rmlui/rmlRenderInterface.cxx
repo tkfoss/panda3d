@@ -377,7 +377,6 @@ init(GraphicsOutput *window) {
   nassertv(window != nullptr);
   _window = window;
 
-  // Pre-allocate 4 layer buffers and 2 scratch buffers.
   for (int i = 0; i < 4; ++i) {
     LayerBuffer *lb = make_layer_buffer(window,
       std::string("rmlui-layer-") + std::to_string(i));
@@ -386,8 +385,7 @@ init(GraphicsOutput *window) {
   for (int i = 0; i < 2; ++i) {
     _scratch[i] = make_layer_buffer(window,
       std::string("rmlui-scratch-") + std::to_string(i));
-    // Mark scratch buffers permanently in-use so they are never returned to
-    // the layer pool.
+    // Mark permanently in-use so scratch buffers are never returned to the pool.
     if (_scratch[i]) _scratch[i]->_in_use = true;
   }
 }
@@ -454,7 +452,7 @@ alloc_layer() {
       return lb;
     }
   }
-  // Pool exhausted — grow on demand (rare: deep nesting or many filters).
+  // Grow on demand (rare: deep nesting or many simultaneous filters).
   LayerBuffer *lb = make_layer_buffer(
     _window, "rmlui-layer-dyn-" + std::to_string(_layer_pool.size()));
   if (lb) {
@@ -532,13 +530,11 @@ begin_layer(LayerBuffer *lb) {
  */
 void RmlRenderInterface::
 end_layer(LayerBuffer *lb, LayerBuffer *dest) {
-  // Flush the source layer's FBO to its texture.
   if (lb != nullptr && lb->_frame_open) {
     lb->_buf->end_frame(GraphicsOutput::FM_render, _thread);
     lb->_frame_open = false;
   }
 
-  // Rebind the destination FBO so subsequent draw calls go there.
   if (dest != nullptr) {
     if (!dest->_frame_open) {
       if (!dest->_buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
@@ -599,7 +595,7 @@ render(Rml::Context *context, CullTraverser *trav,
 
   context->Render();
 
-  // Any unclosed layers indicate an RmlUi bug; clean up defensively.
+  // Unclosed layers indicate an RmlUi bug; clean up defensively.
   while (_layer_stack.size() > 1) {
     LayerEntry top = _layer_stack.back();
     _layer_stack.pop_back();
@@ -1047,12 +1043,14 @@ SaveLayerAsTexture() {
   composite_quad(st, lb->_tex);
   end_layer(snap_lb, nullptr);
 
-  // Keep a strong reference to the texture before returning the buffer.
-  // ReleaseTexture will drop this ref.
-  PT(Texture) snap_tex = snap_lb->_tex;
+  // Transfer ownership of the texture out of the layer buffer before pooling
+  // it.  The PT here becomes the sole strong reference; the manual ref() is
+  // the one that ReleaseTexture will drop via unref_delete.
+  PT(Texture) snap_tex = std::move(snap_lb->_tex);
   snap_tex->ref();
 
-  // Return snap_lb to the pool now; the PT above keeps the texture alive.
+  // Return snap_lb to the pool with _tex cleared so the pool entry holds no
+  // lingering reference to the snapshot texture.
   free_layer(snap_lb);
 
   // Restart lb so the caller can keep rendering into it.

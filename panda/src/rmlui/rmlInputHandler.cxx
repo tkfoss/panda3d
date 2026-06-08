@@ -21,20 +21,21 @@
 #ifndef CPPPARSER
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/Context.h>
+#include <mutex>
 using namespace Rml::Input;
 #endif
 
 TypeHandle RmlInputHandler::_type_handle;
 
 // ---------------------------------------------------------------------------
-// Keymap — built once at type-registration time so there is no lazy-init
-// race.  A file-scope pmap avoids static-initialization-order issues.
+// Keymap — built lazily on the first call to get_rml_key(), protected by a
+// static mutex.  A file-scope pmap avoids static-initialization-order issues.
 // ---------------------------------------------------------------------------
 static pmap<int, int> s_keymap;
 
 /**
  * Populates the Panda ButtonHandle → RmlUi KeyIdentifier map.
- * Called from RmlInputHandler::init_type() (single-threaded startup).
+ * Called once, under keymap_lock, on the first call to get_rml_key().
  */
 static void
 build_keymap() {
@@ -133,21 +134,13 @@ RmlInputHandler::
  * Maps a Panda ButtonHandle to an RmlUi KeyIdentifier, or KI_UNKNOWN if
  * the key has no RmlUi equivalent.
  *
- * The keymap is built on the first call, which happens after Panda's button
- * registry is fully initialised.  A static mutex ensures thread-safety for
- * the one-time build.
+ * The keymap is built on the first call after Panda's button registry is
+ * fully initialised.  std::call_once ensures a single thread-safe build.
  */
 int RmlInputHandler::
 get_rml_key(const ButtonHandle handle) {
-  static Mutex keymap_lock;
-  static bool built = false;
-  if (!built) {
-    MutexHolder holder(keymap_lock);
-    if (!built) {
-      build_keymap();
-      built = true;
-    }
-  }
+  static std::once_flag built;
+  std::call_once(built, build_keymap);
   auto it = s_keymap.find(handle.get_index());
   return (it != s_keymap.end()) ? it->second : 0;
 }
@@ -195,18 +188,18 @@ do_transmit_data(DataGraphTraverser *, const DataNodeTransmit &input,
         } else if (be._button == MouseButton::wheel_down()) {
           _wheel_delta += 1.0f;
         } else if (be._button == MouseButton::one()) {
-          _mouse_buttons[0] = true;
+          _mouse_button_events.push_back({0, true});
         } else if (be._button == MouseButton::two()) {
-          _mouse_buttons[1] = true;
+          _mouse_button_events.push_back({1, true});
         } else if (be._button == MouseButton::three()) {
-          _mouse_buttons[2] = true;
+          _mouse_button_events.push_back({2, true});
         } else if (be._button == MouseButton::four()) {
-          _mouse_buttons[3] = true;
+          _mouse_button_events.push_back({3, true});
         } else if (be._button == MouseButton::five()) {
-          _mouse_buttons[4] = true;
+          _mouse_button_events.push_back({4, true});
         }
         rml_key = get_rml_key(be._button);
-        if (rml_key != KI_UNKNOWN) _keys[rml_key] = true;
+        if (rml_key != KI_UNKNOWN) _key_events.push_back({rml_key, true});
         break;
 
       case ButtonEvent::T_repeat:
@@ -224,18 +217,18 @@ do_transmit_data(DataGraphTraverser *, const DataNodeTransmit &input,
         } else if (be._button == KeyboardButton::meta()) {
           _modifiers &= ~KM_META;
         } else if (be._button == MouseButton::one()) {
-          _mouse_buttons[0] = false;
+          _mouse_button_events.push_back({0, false});
         } else if (be._button == MouseButton::two()) {
-          _mouse_buttons[1] = false;
+          _mouse_button_events.push_back({1, false});
         } else if (be._button == MouseButton::three()) {
-          _mouse_buttons[2] = false;
+          _mouse_button_events.push_back({2, false});
         } else if (be._button == MouseButton::four()) {
-          _mouse_buttons[3] = false;
+          _mouse_button_events.push_back({3, false});
         } else if (be._button == MouseButton::five()) {
-          _mouse_buttons[4] = false;
+          _mouse_button_events.push_back({4, false});
         }
         rml_key = get_rml_key(be._button);
-        if (rml_key != KI_UNKNOWN) _keys[rml_key] = false;
+        if (rml_key != KI_UNKNOWN) _key_events.push_back({rml_key, false});
         break;
 
       case ButtonEvent::T_keystroke:
@@ -261,14 +254,14 @@ void RmlInputHandler::
 update_context(Rml::Context *context, int xoffs, int yoffs) {
   MutexHolder holder(_lock);
 
-  for (auto &[key, down] : _keys) {
+  for (auto &[key, down] : _key_events) {
     if (down) {
       context->ProcessKeyDown((KeyIdentifier) key, _modifiers);
     } else {
       context->ProcessKeyUp((KeyIdentifier) key, _modifiers);
     }
   }
-  _keys.clear();
+  _key_events.clear();
 
   for (int key : _repeated_keys) {
     context->ProcessKeyUp((KeyIdentifier) key, _modifiers);
@@ -289,14 +282,14 @@ update_context(Rml::Context *context, int xoffs, int yoffs) {
       _modifiers);
   }
 
-  for (auto &[btn, down] : _mouse_buttons) {
+  for (auto &[btn, down] : _mouse_button_events) {
     if (down) {
       context->ProcessMouseButtonDown(btn, _modifiers);
     } else {
       context->ProcessMouseButtonUp(btn, _modifiers);
     }
   }
-  _mouse_buttons.clear();
+  _mouse_button_events.clear();
 
   if (_wheel_delta != 0.0f) {
     context->ProcessMouseWheel(_wheel_delta, _modifiers);

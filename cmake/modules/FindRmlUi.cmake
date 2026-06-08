@@ -51,4 +51,14 @@ if(RmlUi_INCLUDE_DIR AND (RmlUi_LIBRARY OR RmlUi_DEBUG_LIBRARY))
 endif()
 
 include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(RmlUi DEFAULT_MSG RmlUi_INCLUDE_DIR RmlUi_LIBRARY)
+# Require the include dir and at least one library (release or debug).
+# Compute a helper variable that is set (to the found library path) when any
+# library is available; find_package_handle_standard_args treats an unset or
+# empty variable as missing.
+if(RmlUi_LIBRARY)
+  set(_RmlUi_ANY_LIBRARY "${RmlUi_LIBRARY}")
+elseif(RmlUi_DEBUG_LIBRARY)
+  set(_RmlUi_ANY_LIBRARY "${RmlUi_DEBUG_LIBRARY}")
+endif()
+find_package_handle_standard_args(RmlUi DEFAULT_MSG
+  RmlUi_INCLUDE_DIR _RmlUi_ANY_LIBRARY)

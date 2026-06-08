@@ -1,36 +1,22 @@
 """
-Panda3D RmlUi console sample
-============================
-Restored from the original libRocket rocket-console sample, updated to use
-the panda3d.rmlui module (RmlUi v6).
-
-A loading screen appears while the 3D models load.  Once ready, a DOS-style
-console is rendered into a GraphicsBuffer that is mapped onto the monitor
-model in the scene.  Type 'help' for available commands.
-
-Controls
---------
-Escape     : quit
-Mouse      : orbit camera (after loading)
+Show how to use RmlUi in Panda3D.
 """
 import os
 import sys
+from panda3d.core import loadPrcFileData, Point3, Vec4, Mat4, LoaderOptions  # @UnusedImport
+from panda3d.core import DirectionalLight, AmbientLight, PointLight
+from panda3d.core import Texture, PNMImage
+from panda3d.core import PandaSystem
 import random
-
-from panda3d.core import (
-    AmbientLight, DirectionalLight, PointLight,
-    Texture, Vec4, Mat4,
-    loadPrcFileData,
-)
-from panda3d.rmlui import RmlRegion, RmlInputHandler
+from direct.interval.LerpInterval import LerpHprInterval, LerpPosInterval, LerpFunc
 from direct.showbase.ShowBase import ShowBase
-from direct.interval.LerpInterval import LerpFunc
 
-import console as consolemod
+from panda3d.rmlui import RmlRegion, RmlInputHandler
 
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-loadPrcFileData("", f"model-path {ASSETS}")
+loadPrcFileData("", "model-path " + ASSETS)
 
+import console
 
 class MyApp(ShowBase):
 
@@ -38,261 +24,398 @@ class MyApp(ShowBase):
         ShowBase.__init__(self)
 
         self.win.setClearColor(Vec4(0.2, 0.2, 0.2, 1))
+
         self.disableMouse()
+
         self.render.setShaderAuto()
 
-        # Lighting
-        dlight = DirectionalLight("dlight")
-        dlight.setColor((0.8, 0.8, 0.5, 1))
+        dlight = DirectionalLight('dlight')
+        alight = AmbientLight('alight')
         dlnp = self.render.attachNewNode(dlight)
+        alnp = self.render.attachNewNode(alight)
+        dlight.setColor((0.8, 0.8, 0.5, 1))
+        alight.setColor((0.2, 0.2, 0.2, 1))
         dlnp.setHpr(0, -60, 0)
         self.render.setLight(dlnp)
-
-        alight = AmbientLight("alight")
-        alight.setColor((0.2, 0.2, 0.2, 1))
-        alnp = self.render.attachNewNode(alight)
         self.render.setLight(alnp)
 
-        plight = PointLight("plight")
+        # Put lighting on the main scene
+        plight = PointLight('plight')
         plnp = self.render.attachNewNode(plight)
         plnp.setPos(0, 0, 10)
         self.render.setLight(plnp)
+        self.render.setLight(alnp)
 
-        # Shared RmlUi input handler
-        self.input_handler = RmlInputHandler()
-        self.mouseWatcher.attachNewNode(self.input_handler)
+        self.loadingTask = None
 
-        self._monitor_np = None
-        self._keyboard_np = None
-        self._loading_doc = None
-        self._console = None
-        self._spew_active = False
+        #self.startModelLoadingAsync()
+        self.startModelLoading()
 
-        self._start_loading()
-        self._open_loading_screen()
+        self.inputHandler = RmlInputHandler()
+        self.mouseWatcher.attachNewNode(self.inputHandler)
 
-    # ------------------------------------------------------------------
-    # Asset loading
-    # ------------------------------------------------------------------
+        self.openLoadingDialog()
 
-    def _start_loading(self):
-        self.taskMgr.doMethodLater(0.5, self._load_models, "load-models")
+    def loadRmlUiFonts(self, context):
+        """ Load fonts referenced from e.g. 'font-family' RCSS directives.
 
-    def _load_models(self, task):
-        self._monitor_np = self.loader.loadModel("monitor")
-        self._keyboard_np = self.loader.loadModel("takeyga_kb")
-        return task.done
+        Note: the name of the font as used in 'font-family'
+        is not always the same as the filename;
+        open the font in your OS to see its display name.
 
-    # ------------------------------------------------------------------
-    # Loading screen
-    # ------------------------------------------------------------------
+        Unlike libRocket, RmlUi requires fonts to be loaded per-context.
+        Call this after creating a context and pass it in.
+        """
+        context.loadFontFace(os.path.join(ASSETS, "modenine.ttf"))
 
-    def _open_loading_screen(self):
-        self._loading_region = RmlRegion.make("loading", self.win)
-        self._loading_region.setInputHandler(self.input_handler)
 
-        ctx = self._loading_region.getContext()
-        ctx.loadFontFace(os.path.join(ASSETS, "modenine.ttf"))
+    def startModelLoading(self):
+        self.monitorNP = None
+        self.keyboardNP = None
+        self.loadingError = False
 
-        self._loading_doc = ctx.loadDocument(os.path.join(ASSETS, "loading.rml"))
-        if not self._loading_doc:
-            raise RuntimeError("loading.rml not found")
-        self._loading_doc.show()
+        self.taskMgr.doMethodLater(1, self.loadModels, 'loadModels')
 
-        self._label_el = self._loading_doc.getElementById("loading-label")
-        self._loading_body = self._loading_doc.getElementById("loading-body")
+    def loadModels(self, task):
+        self.monitorNP = self.loader.loadModel("monitor")
+        self.keyboardNP = self.loader.loadModel("takeyga_kb")
 
-        # Close on click or Enter/Space/Escape via Panda3D events
-        self._loading_body.addEventListener("click", "rmlui-loading-click")
-        self.accept("rmlui-loading-click", self._user_confirmed)
-        self.accept("enter", self._user_confirmed)
-        self.accept("space", self._user_confirmed)
-        self.accept("escape", self._user_confirmed)
+    def startModelLoadingAsync(self):
+        """
+        NOTE: this seems to invoke a few bugs (crashes, sporadic model
+        reading errors, etc) so is disabled for now...
+        """
+        self.monitorNP = None
+        self.keyboardNP = None
+        self.loadingError = False
 
-        self._user_wants_close = False
-        self._stop_loading_time = 0   # set when models are ready
+        # force the "loading" to take some time after the first run...
+        options = LoaderOptions()
+        options.setFlags(options.getFlags() | LoaderOptions.LFNoCache)
 
-        self.taskMgr.add(self._cycle_loading, "cycle-loading")
+        def gotMonitorModel(model):
+            if not model:
+                self.loadingError = True
+            self.monitorNP = model
 
-    def _user_confirmed(self):
-        self._user_wants_close = True
+        self.loader.loadModel("monitor", loaderOptions=options, callback=gotMonitorModel)
 
-    def _cycle_loading(self, task):
-        ready = self._monitor_np is not None and self._keyboard_np is not None
-        t = globalClock.getFrameTime()
+        def gotKeyboardModel(model):
+            if not model:
+                self.loadingError = True
+            self.keyboardNP = model
 
-        if ready:
-            if self._stop_loading_time == 0:
-                self._stop_loading_time = t + 1.5   # brief "Ready" pause
-            if self._label_el:
-                self._label_el.setInnerRml("Ready")
-            if self._user_wants_close or t >= self._stop_loading_time:
-                self._dismiss_loading()
-                return task.done
+        self.loader.loadModel("takeyga_kb", loaderOptions=options, callback=gotKeyboardModel)
+
+    def openLoadingDialog(self):
+        self.userConfirmed = False
+
+        self.windowRmlRegion = RmlRegion.make('pandaRml', self.win)
+        self.windowRmlRegion.setActive(1)
+
+        self.windowRmlRegion.setInputHandler(self.inputHandler)
+
+        self.windowContext = self.windowRmlRegion.getContext()
+
+        self.loadRmlUiFonts(self.windowContext)
+
+        self.loadingDocument = self.windowContext.loadDocument(os.path.join(ASSETS, "loading.rml"))
+        if not self.loadingDocument:
+            raise AssertionError("did not find loading.rml")
+
+        self.loadingDots = 0
+        el = self.loadingDocument.getElementById('loading-label')
+        self.loadingText = el
+        self.stopLoadingTime = globalClock.getFrameTime() + 3
+        self.loadingTask = self.taskMgr.add(self.cycleLoading, 'doc changer')
+
+        # note: you may encounter errors like 'KeyError: 'document'"
+        # when invoking events using methods from your own scripts with this
+        # obvious code:
+        #
+        # self.loadingDocument.AddEventListener('aboutToClose',
+        #                                       self.onLoadingDialogDismissed, True)
+        #
+        # A workaround is to define callback methods in standalone Python
+        # files with event, self, and document defined to None.
+        #
+        # see https://www.panda3d.org/forums/viewtopic.php?f=4&t=16412
+        #
+        # In RmlUi, we use addEventListener with a Panda3D event name instead:
+
+        body = self.loadingDocument.getElementById('loading-body')
+        body.addEventListener('click', 'rmlui-aboutToClose')
+        self.accept('rmlui-aboutToClose', self.handleAboutToClose)
+
+        self.loadingDocument.show()
+
+    def handleAboutToClose(self):
+        self.userConfirmed = True
+        if self.monitorNP and self.keyboardNP:
+            self.onLoadingDialogDismissed()
+
+    def attachCustomRmlUiEvent(self, element, rmlEventName, pandaHandler, once=False):
+        # handle custom event
+
+        # note: you may encounter errors like 'KeyError: 'document'"
+        # when invoking events using methods from your own scripts with this
+        # obvious code:
+        #
+        # self.loadingDocument.AddEventListener('aboutToClose',
+        #                                       self.onLoadingDialogDismissed, True)
+        #
+        # see https://www.panda3d.org/forums/viewtopic.php?f=4&t=16412
+
+        # this technique converts RmlUi events to Panda3D events
+
+        pandaEvent = 'panda.' + rmlEventName
+
+        element.addEventListener(rmlEventName, pandaEvent)
+
+        if once:
+            self.acceptOnce(pandaEvent, pandaHandler)
         else:
-            dots = int(t * 4) % 5
-            if self._label_el:
-                self._label_el.setInnerRml("Loading" + "." * (dots + 1))
+            self.accept(pandaEvent, pandaHandler)
+
+
+    def cycleLoading(self, task):
+        """
+        Update the "loading" text in the initial window until
+        the user presses Space, Enter, or Escape or clicks (see loading.rxml)
+        or sufficient time has elapsed (self.stopLoadingTime).
+        """
+        text = self.loadingText
+
+        now = globalClock.getFrameTime()
+        if self.monitorNP and self.keyboardNP:
+            text.setInnerRml("Ready")
+            if now > self.stopLoadingTime or self.userConfirmed:
+                self.onLoadingDialogDismissed()
+                return task.done
+        elif self.loadingError:
+            text.setInnerRml("Assets not found")
+        else:
+            count = 5
+            intv = int(now * 4) % count  # @UndefinedVariable
+            text.setInnerRml("Loading" + ("." * (1+intv)) + (" " * (2 - intv)))
 
         return task.cont
 
-    def _dismiss_loading(self):
-        self.ignore("enter")
-        self.ignore("space")
-        self.ignore("escape")
-        self.ignore("rmlui-loading-click")
-        if self._loading_doc:
-            self._loading_doc.close()
-            self._loading_doc = None
-        self._loading_region.setActive(False)
-        self._create_console()
+    def onLoadingDialogDismissed(self):
+        """ Once a models are loaded, stop 'loading' and proceed to 'start' """
+        if self.loadingDocument:
+            if self.loadingTask:
+                self.taskMgr.remove(self.loadingTask)
+            self.loadingTask = None
 
-    # ------------------------------------------------------------------
-    # Console
-    # ------------------------------------------------------------------
+            self.showStarting()
 
-    def _create_console(self):
-        self._monitor_np.reparentTo(self.render)
-        self._monitor_np.setScale(1.5)
-        self._monitor_np.setPos(0, 0, 1)
+    def fadeOut(self, element, time):
+        """ Example updating RCSS attributes from code
+        by modifying the 'opacity' RCSS attribute to slowly
+        change from solid to transparent.
 
-        self._keyboard_np.reparentTo(self.render)
-        self._keyboard_np.setHpr(-90, 0, 15)
-        self._keyboard_np.setScale(20)
-        self._keyboard_np.setPos(0, -5, -2.5)
+        element: the RmlUi element whose style to modify
+        time: time in seconds for fadeout
+        """
 
+        def updateAlpha(t):
+            # another way of setting style on a specific element
+            element.setAttribute('style', 'opacity: ' + str(t) + ';')
+
+        alphaInterval = LerpFunc(updateAlpha,
+                             duration=time,
+                             fromData=1.0,
+                             toData=0.0,
+                             blendType='easeIn')
+
+        return alphaInterval
+
+    def showStarting(self):
+        """ Models are loaded, so update the dialog,
+        fade out, then transition to the console. """
+        self.loadingText.setInnerRml('Starting...')
+
+        alphaInterval = self.fadeOut(self.loadingText, 0.5)
+        alphaInterval.setDoneEvent('fadeOutFinished')
+
+        def fadeOutFinished():
+            if self.loadingDocument:
+                self.loadingDocument.close()
+                self.loadingDocument = None
+                self.createConsole()
+
+        self.accept('fadeOutFinished', fadeOutFinished)
+
+        alphaInterval.start()
+
+    def createConsole(self):
+        """ Create the in-world console, which displays
+        a RmlRegion in a GraphicsBuffer, which appears
+        in a Texture on the monitor model. """
+
+        self.monitorNP.reparentTo(self.render)
+        self.monitorNP.setScale(1.5)
+
+        self.keyboardNP.reparentTo(self.render)
+        self.keyboardNP.setHpr(-90, 0, 15)
+        self.keyboardNP.setScale(20)
+
+        self.placeItems()
+
+        self.setupRmlUiConsole()
+
+        # re-enable mouse
+        mat=Mat4(self.camera.getMat())
+        mat.invertInPlace()
+        self.mouseInterfaceNode.setMat(mat)
+        self.enableMouse()
+
+    def placeItems(self):
         self.camera.setPos(0, -20, 0)
         self.camera.setHpr(0, 0, 0)
+        self.monitorNP.setPos(0, 0, 1)
+        self.keyboardNP.setPos(0, -5, -2.5)
+
+
+    def setupRmlUiConsole(self):
+        """
+        Place a new RmlUi window onto a texture
+        bound to the front of the monitor.
+        """
         self.win.setClearColor(Vec4(0.5, 0.5, 0.8, 1))
 
-        faceplate = self._monitor_np.find("**/Faceplate")
-        if not faceplate:
-            faceplate = self._monitor_np.find("**/*faceplate*")
+        faceplate = self.monitorNP.find("**/Faceplate")
+        assert faceplate
 
         mybuffer = self.win.makeTextureBuffer("Console Buffer", 1024, 512)
         tex = mybuffer.getTexture()
         tex.setMagfilter(Texture.FTLinear)
         tex.setMinfilter(Texture.FTLinear)
-        if faceplate:
-            faceplate.setTexture(tex, 1)
 
-        rml_region = RmlRegion.make("console", mybuffer)
-        rml_region.setInputHandler(self.input_handler)
+        faceplate.setTexture(tex, 1)
 
-        ctx = rml_region.getContext()
-        ctx.loadFontFace(os.path.join(ASSETS, "dos437.ttf"))
+        self.rmlConsole = RmlRegion.make('console', mybuffer)
+        self.rmlConsole.setInputHandler(self.inputHandler)
 
-        doc = ctx.loadDocument(os.path.join(ASSETS, "console.rml"))
+        self.consoleContext = self.rmlConsole.getContext()
+        self.consoleContext.loadFontFace(os.path.join(ASSETS, "dos437.ttf"))
+
+        doc = self.consoleContext.loadDocument(os.path.join(ASSETS, "console.rml"))
         if not doc:
-            raise RuntimeError("console.rml not found")
+            raise AssertionError("did not find console.rml")
         doc.show()
 
-        self._console = consolemod.Console(self, doc, 40, 13, self._handle_command)
-        self._console.add_line("Panda DOS")
-        self._console.add_line("type 'help'")
-        self._console.add_line("")
-        self._console.allow_editing(True)
+        self.console = console.Console(self, doc, 40, 13, self.handleCommand)
 
-        self._setup_console_input()
+        self.console.addLine("Panda DOS")
+        self.console.addLine("type 'help'")
+        self.console.addLine("")
 
-        # Re-enable mouse for camera orbit
-        mat = Mat4(self.camera.getMat())
-        mat.invertInPlace()
-        self.mouseInterfaceNode.setMat(mat)
-        self.enableMouse()
+        self.console.allowEditing(True)
 
-    def _setup_console_input(self):
-        self.accept("escape", sys.exit)
+        self.setupConsoleInput()
 
-        # Printable characters
+    def setupConsoleInput(self):
+        self.accept('escape', sys.exit)
+
+        # Printable characters — forwarded to Console since RmlUi no longer
+        # handles textinput/keydown events via JS strings
         chars = "abcdefghijklmnopqrstuvwxyz0123456789 !@#$%^&*()-_=+[]{}\\|;:'\",.<>/?"
         for ch in chars:
-            self.accept(ch, self._console.handle_char, [ch])
+            self.accept(ch, self.console.handleChar, [ch])
         for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-            self.accept(ch, self._console.handle_char, [ch])
+            self.accept(ch, self.console.handleChar, [ch])
 
-        self.accept("backspace", self._console.handle_backspace)
-        self.accept("enter", self._console.handle_enter)
-        self.accept("control-c", self._console.handle_break)
+        self.accept('backspace', self.console.handleBackspace)
+        self.accept('enter', self.console.handleEnter)
+        self.accept('control-c', self.console.handleBreak)
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
-
-    def _handle_command(self, command):
+    def handleCommand(self, command):
         if command is None:
-            self._spew_active = False
-            self._console.add_line("*** break ***")
-            self._console.allow_editing(True)
+            # hack for Ctrl-Break
+            self.spewInProgress = False
+            self.console.addLine("*** break ***")
+            self.console.allowEditing(True)
             return
 
         command = command.strip()
         if not command:
             return
 
-        tokens = command.split()
-        cmd = tokens[0].lower()
+        tokens = [x.strip() for x in command.split(' ')]
+        command = tokens[0].lower()
 
-        if cmd == "help":
-            self._console.add_lines([
+        if command == 'help':
+            self.console.addLines([
                 "Sorry, this is utter fakery.",
                 "You won't get much more",
                 "out of this simulation unless",
-                "you program it yourself. :)",
-                "",
+                "you program it yourself. :)"
             ])
-        elif cmd == "dir":
-            self._console.add_lines([
+        elif command == 'dir':
+            self.console.addLines([
                 "Directory of C:\\:",
                 "HELP     COM    72 05-06-2015 14:07",
                 "DIR      COM   121 05-06-2015 14:11",
                 "SPEW     COM   666 05-06-2015 15:02",
                 "   2 Files(s)  859 Bytes.",
                 "   0 Dirs(s)  7333 Bytes free.",
-                "",
-            ])
-        elif cmd == "cls":
-            self._console.cls()
-        elif cmd == "echo":
-            self._console.add_line(" ".join(tokens[1:]))
-        elif cmd == "ver":
-            from panda3d.core import PandaSystem
-            self._console.add_line("Panda DOS v0.01 in Panda3D " + PandaSystem.getVersionString())
-        elif cmd == "spew":
-            self._start_spew()
-        elif cmd == "exit":
-            self._console.set_prompt("System is shutting down NOW!")
-            self._terminate()
+                ""])
+        elif command == 'cls':
+            self.console.cls()
+        elif command == 'echo':
+            self.console.addLine(' '.join(tokens[1:]))
+        elif command == 'ver':
+            self.console.addLine('Panda DOS v0.01 in Panda3D ' + PandaSystem.getVersionString())
+        elif command == 'spew':
+            self.startSpew()
+        elif command == 'exit':
+            self.console.setPrompt("System is shutting down NOW!")
+            self.terminateMonitor()
         else:
-            self._console.add_line("command not found")
+            self.console.addLine("command not found")
 
-    def _start_spew(self):
-        self._console.allow_editing(False)
-        self._console.add_line("LINE NOISE 1.0")
-        self._console.add_line("")
-        self._spew_active = True
-        self._queue_spew(2)
+    def startSpew(self):
+        self.console.allowEditing(False)
+        self.console.addLine("LINE NOISE 1.0")
+        self.console.addLine("")
 
-    def _queue_spew(self, delay=0.1):
-        self.taskMgr.doMethodLater(delay, self._spew, "spew")
+        self.spewInProgress = True
 
-    def _spew(self, task):
-        if not self._spew_active:
+        # note: spewage always occurs in 'doMethodLater';
+        # time.sleep() would be pointless since the whole
+        # UI would be frozen during the wait.
+        self.queueSpew(2)
+
+    def queueSpew(self, delay=0.1):
+        self.taskMgr.doMethodLater(delay, self.spew, 'spew')
+
+    def spew(self, task):
+        # generate random spewage, just like on TV!
+        if not self.spewInProgress:
             return task.done
 
         def randchr():
-            return chr(32 if random.random() < 0.25 else random.randint(33, 126))
+            return chr(int(random.random() < 0.25 and 32 or random.randint(32, 127)))
 
-        self._console.add_line("".join(randchr() for _ in range(40)))
-        self._queue_spew()
+        line = ''.join([randchr() for _ in range(40) ])
+
+        self.console.addLine(line)
+        self.queueSpew()
         return task.done
 
-    def _terminate(self):
-        def done():
+    def terminateMonitor(self):
+        alphaInterval = self.fadeOut(self.console.getTextContainer(), 2)
+
+        alphaInterval.setDoneEvent('fadeOutFinished')
+
+        def fadeOutFinished():
             sys.exit(0)
 
-        LerpFunc(lambda _: None, duration=2).start()
-        self.taskMgr.doMethodLater(2, lambda t: sys.exit(0) or t.done, "quit")
+        self.accept('fadeOutFinished', fadeOutFinished)
 
+        alphaInterval.start()
 
-MyApp().run()
+app = MyApp()
+app.run()

@@ -1,110 +1,116 @@
 """
-Console widget for the rmlui rocket-console sample.
-
-Manages a scrolling text buffer rendered via RmlUi's set_inner_rml.
-Key input is forwarded from Panda3D's keyboard events.
+Simple console widget for RmlUi
 """
 import html
 
 
-class Console:
-    def __init__(self, base, doc, cols, rows, command_handler):
+class Console(object):
+    def __init__(self, base, doc, cols, rows, commandHandler):
         self.base = base
-        self.doc = doc
+
+        self.document = doc
         self.cols = cols
         self.rows = rows
-        self.command_handler = command_handler
+        self.commandHandler = commandHandler
 
-        self._lines = []          # list of plain-text strings
-        self._input = ""
-        self._prompt = "C:\\>"
-        self._edit_mode = False
-        self._blink = False
+        self.consolePrompt = "C:\\>"
+        self.input = ""
+        self.lastLine = None
+        self.blinkState = False
 
-        self._content_el = doc.getElementById("content")
-        assert self._content_el, "console.rml must have a div#content"
+        self._lines = []
 
-        self.allow_editing(True)
+        el = self.document.getElementById('content')
+        self.textEl = el
 
-    # ------------------------------------------------------------------
+        self.allowEditing(True)
 
-    def get_prompt(self):
-        return self._prompt
+    def getTextContainer(self):
+        return self.textEl
 
-    def set_prompt(self, prompt):
-        self._prompt = prompt
-        self._render()
+    def setPrompt(self, prompt):
+        self.consolePrompt = prompt
 
-    def allow_editing(self, edit_mode):
-        self._edit_mode = edit_mode
-        if edit_mode:
-            self._input = ""
-        self._render()
-        if edit_mode:
-            self._queue_blink()
+    def allowEditing(self, editMode):
+        self.editMode = editMode
+        if editMode:
+            self.input = ""
+            if not self._lines:
+                self.addLine("")
+            self.newEditLine()
 
-    def add_line(self, text):
+    def addLine(self, text):
         self._lines.append(text)
         while len(self._lines) > self.rows:
             self._lines.pop(0)
+        self.lastLine = text
         self._render()
 
-    def add_lines(self, lines):
+    def addLines(self, lines):
         for line in lines:
-            self.add_line(line)
+            self.addLine(line)
 
-    def cls(self):
-        self._lines = []
+    def updateEditLine(self, newInput=''):
+        self.input = newInput
         self._render()
-
-    # ------------------------------------------------------------------
 
     def _render(self):
         parts = []
         for line in self._lines:
             parts.append(html.escape(line))
-        if self._edit_mode:
-            cursor = "_" if self._blink else " "
-            parts.append(html.escape(self._prompt + self._input) + cursor)
-        self._content_el.setInnerRml("\n".join(parts))
+        if self.editMode:
+            newText = self.consolePrompt + self.input
+            parts.append(html.escape(newText) + (self.blinkState and '_' or ''))
+        self.textEl.setInnerRml("\n".join(parts))
 
-    def _queue_blink(self):
-        self.base.taskMgr.doMethodLater(0.4, self._blink_tick, "console-blink")
+    def scroll(self):
+        self.blinkState = False
+        self.addLine(self.consolePrompt + self.input)
 
-    def _blink_tick(self, task):
-        if not self._edit_mode:
-            return task.done
-        self._blink = not self._blink
-        self._render()
-        self._queue_blink()
+    def queueBlinkCursor(self):
+        self.base.taskMgr.doMethodLater(0.2, self.blinkCursor, 'blinkCursor')
+
+    def blinkCursor(self, task):
+        self.blinkState = not self.blinkState
+        if self.editMode:
+            self._render()
+        self.queueBlinkCursor()
         return task.done
+
+    def newEditLine(self):
+        self.updateEditLine()
+        self.queueBlinkCursor()
+
+    def cls(self):
+        self._lines = []
+        self.lastLine = None
+        self._render()
 
     # ------------------------------------------------------------------
     # Keyboard input — called by main.py via Panda3D key events
+    # (replaces the keydown/textinput RmlUi JS event listeners from libRocket)
 
-    def handle_char(self, keyname):
-        """Called for printable character keys."""
-        if not self._edit_mode:
+    def handleChar(self, keyname):
+        if not self.editMode:
             return
         if len(keyname) == 1 and 32 <= ord(keyname) < 127:
-            self._input += keyname
-            self._render()
+            self.updateEditLine(self.input + keyname)
 
-    def handle_backspace(self):
-        if not self._edit_mode:
+    def handleBackspace(self):
+        if not self.editMode:
             return
-        self._input = self._input[:-1]
-        self._render()
+        self.updateEditLine(self.input[:-1])
 
-    def handle_enter(self):
-        if not self._edit_mode:
+    def handleEnter(self):
+        if not self.editMode:
             return
-        cmd = self._input
-        self._input = ""
-        self.add_line(self._prompt + cmd)
-        self.command_handler(cmd)
-        if self._edit_mode:
-            self._render()
+        # emit line without cursor
+        self.scroll()
+        # handle command
+        self.commandHandler(self.input)
+        if self.editMode:
+            # start with new "command"
+            self.updateEditLine("")
 
-    def handle_break(self):
-        self.command_handler(None)
+    def handleBreak(self):
+        self.commandHandler(None)

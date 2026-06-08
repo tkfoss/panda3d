@@ -20,7 +20,9 @@
  */
 void RmlDocument::
 show() {
-  _doc->Show();
+  if (_doc != nullptr) {
+    _doc->Show();
+  }
 }
 
 /**
@@ -28,16 +30,23 @@ show() {
  */
 void RmlDocument::
 hide() {
-  _doc->Hide();
+  if (_doc != nullptr) {
+    _doc->Hide();
+  }
 }
 
 /**
- * Closes and destroys the document.  Do not use this wrapper after calling
- * close().
+ * Closes and destroys the document.  The underlying document is freed on
+ * the next Context::Update(); this wrapper nulls _doc immediately so that
+ * any subsequent method call on the wrapper safely returns without crashing.
  */
 void RmlDocument::
 close() {
+  if (_doc == nullptr) {
+    return;
+  }
   _doc->Close();
+  _doc = nullptr;
 }
 
 /**
@@ -45,6 +54,9 @@ close() {
  */
 PT(RmlElement) RmlDocument::
 get_element_by_id(const std::string &id) {
+  if (_doc == nullptr) {
+    return nullptr;
+  }
   Rml::Element *el = _doc->GetElementById(id);
   if (el == nullptr) {
     return nullptr;
@@ -57,6 +69,9 @@ get_element_by_id(const std::string &id) {
  */
 std::string RmlDocument::
 get_title() const {
+  if (_doc == nullptr) {
+    return std::string();
+  }
   return _doc->GetTitle();
 }
 
@@ -65,5 +80,7 @@ get_title() const {
  */
 void RmlDocument::
 set_title(const std::string &title) {
-  _doc->SetTitle(title);
+  if (_doc != nullptr) {
+    _doc->SetTitle(title);
+  }
 }

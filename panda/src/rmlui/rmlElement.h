@@ -22,7 +22,6 @@
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/EventListener.h>
 #include <string>
-#include <vector>
 #endif
 
 /**
@@ -70,12 +69,12 @@ protected:
   Rml::Element *_el = nullptr;
 
   struct PandaEventListener : public Rml::EventListener {
-    std::string panda_event;
-    explicit PandaEventListener(const std::string &ev) : panda_event(ev) {}
+    std::string _panda_event;
+    explicit PandaEventListener(const std::string &ev) : _panda_event(ev) {}
     void ProcessEvent(Rml::Event &) override;
     void OnDetach(Rml::Element *) override { delete this; }
   };
-  std::vector<PandaEventListener *> _listeners;
+  pvector<PandaEventListener *> _listeners;
 #endif
 };
 

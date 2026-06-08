@@ -136,5 +136,5 @@ RmlElement::
  */
 void RmlElement::PandaEventListener::
 ProcessEvent(Rml::Event &) {
-  throw_event(panda_event);
+  throw_event(_panda_event);
 }

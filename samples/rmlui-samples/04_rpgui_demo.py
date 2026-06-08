@@ -26,7 +26,7 @@ import math
 
 from direct.showbase.ShowBase import ShowBase
 from panda3d.core import (loadPrcFileData, LVecBase4f, WindowProperties,
-                           TransparencyAttrib, TexturePool, CardMaker, NodePath)
+                           TransparencyAttrib, TexturePool, CardMaker)
 
 from panda3d.rmlui import RmlRegion, RmlInputHandler
 

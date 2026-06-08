@@ -124,8 +124,14 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
     return false;
   }
 
-  // Capture Python callables; increment ref-counts so they stay alive for the
-  // lifetime of the data model.
+  // Normalise setter: treat Py_None the same as nullptr (read-only variable).
+  // This ensures Py_XINCREF/Py_XDECREF below are always symmetric.
+  if (setter == Py_None) {
+    setter = nullptr;
+  }
+
+  // Increment ref-counts so the callables stay alive for the lifetime of the
+  // data model (the lambdas below capture the raw pointers).
   Py_XINCREF(getter);
   Py_XINCREF(setter);
 
@@ -142,7 +148,7 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
   };
 
   Rml::DataSetFunc set_fn;
-  if (setter && setter != Py_None) {
+  if (setter != nullptr) {
     set_fn = [setter](const Rml::Variant &v) {
       PyGILState_STATE gstate = PyGILState_Ensure();
       PyObject *arg = variant_to_python(v);
@@ -159,9 +165,7 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
 
   bool ok = _constructor.BindFunc(name, std::move(get_fn), std::move(set_fn));
 
-  // The lambdas captured raw PyObject* and will keep the ref alive.  We need
-  // to balance our Py_XINCREF above: if BindFunc failed the lambdas were not
-  // stored and we must release the refs ourselves.
+  // If BindFunc failed the lambdas were not stored; release the refs we took.
   if (!ok) {
     Py_XDECREF(getter);
     Py_XDECREF(setter);
