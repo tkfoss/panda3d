@@ -11,6 +11,7 @@
 
 #include "config_rmlui.cxx"
 #include "rmlContext.cxx"
+#include "rmlDataModel.cxx"
 #include "rmlDocument.cxx"
 #include "rmlElement.cxx"
 #include "rmlFileInterface.cxx"

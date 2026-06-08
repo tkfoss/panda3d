@@ -19,6 +19,7 @@
 
 #ifndef CPPPARSER
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/EventListener.h>
 #include <string>
 #include <vector>
@@ -41,6 +42,11 @@ PUBLISHED:
   void click();
   void focus();
 
+  // value property for form controls (<input>, <select>, <textarea>).
+  // Returns an empty string if the element is not a form control.
+  std::string get_value() const;
+  void set_value(const std::string &value);
+
   // Attach a named Panda3D event that fires when this element receives
   // the given DOM event (e.g. "click").  The event name thrown on the
   // Panda3D Messenger is panda_event.  Listeners accumulate; call again
@@ -50,6 +56,7 @@ PUBLISHED:
 
   MAKE_PROPERTY(id, get_id);
   MAKE_PROPERTY(inner_rml, get_inner_rml, set_inner_rml);
+  MAKE_PROPERTY(value, get_value, set_value);
 
 public:
   RmlElement() = default;

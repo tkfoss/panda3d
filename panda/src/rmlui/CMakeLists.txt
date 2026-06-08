@@ -5,6 +5,7 @@ endif()
 set(P3RMLUI_HEADERS
   config_rmlui.h
   rmlContext.h
+  rmlDataModel.h
   rmlDocument.h
   rmlElement.h
   rmlFileInterface.h
@@ -17,6 +18,7 @@ set(P3RMLUI_HEADERS
 set(P3RMLUI_SOURCES
   config_rmlui.cxx
   rmlContext.cxx
+  rmlDataModel.cxx
   rmlDocument.cxx
   rmlElement.cxx
   rmlFileInterface.cxx
@@ -30,10 +32,14 @@ composite_sources(p3rmlui P3RMLUI_SOURCES)
 add_library(p3rmlui ${P3RMLUI_SOURCES} ${P3RMLUI_HEADERS})
 set_target_properties(p3rmlui PROPERTIES DEFINE_SYMBOL BUILDING_PANDARMUI)
 target_link_libraries(p3rmlui panda RmlUi::RmlUi)
+if(HAVE_PYTHON)
+  target_include_directories(p3rmlui PRIVATE "${PROJECT_SOURCE_DIR}/dtool/src/interrogatedb")
+  target_link_libraries(p3rmlui PKG::PYTHON)
+endif()
 # Only interrogate the files with PUBLISHED: annotations; the interface
 # adapter files (rmlFileInterface, rmlRenderInterface, rmlSystemInterface)
 # contain Rml:: types that the CPPPARSER cannot resolve.
-target_interrogate(p3rmlui config_rmlui.cxx rmlInputHandler.cxx rmlRegion.cxx rmlContext.cxx rmlDocument.cxx rmlElement.cxx)
+target_interrogate(p3rmlui config_rmlui.cxx rmlInputHandler.cxx rmlRegion.cxx rmlContext.cxx rmlDataModel.cxx rmlDocument.cxx rmlElement.cxx)
 
 if(HAVE_RMLUI_DEBUGGER)
   target_compile_definitions(p3rmlui PRIVATE HAVE_RMLUI_DEBUGGER)

@@ -23,6 +23,8 @@
 
 /**
  * Implementation of SystemInterface that redirects to Panda's clock and notify.
+ * SetMouseCursor fires a Panda Messenger event "rmlui-cursor" with the cursor
+ * name so Python can react without polling.
  */
 class RmlSystemInterface
 #ifndef CPPPARSER
@@ -32,6 +34,9 @@ class RmlSystemInterface
 public:
   double GetElapsedTime() override;
   bool LogMessage(Rml::Log::Type type, const Rml::String &message) override;
+#ifndef CPPPARSER
+  void SetMouseCursor(const Rml::String &cursor_name) override;
+#endif
 };
 
 #endif

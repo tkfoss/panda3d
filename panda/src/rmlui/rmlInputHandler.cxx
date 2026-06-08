@@ -26,6 +26,93 @@ using namespace Rml::Input;
 
 TypeHandle RmlInputHandler::_type_handle;
 
+// ---------------------------------------------------------------------------
+// Keymap — built once at type-registration time so there is no lazy-init
+// race.  A file-scope pmap avoids static-initialization-order issues.
+// ---------------------------------------------------------------------------
+static pmap<int, int> s_keymap;
+
+/**
+ * Populates the Panda ButtonHandle → RmlUi KeyIdentifier map.
+ * Called from RmlInputHandler::init_type() (single-threaded startup).
+ */
+static void
+build_keymap() {
+  s_keymap[KeyboardButton::space().get_index()]         = KI_SPACE;
+  s_keymap[KeyboardButton::backspace().get_index()]     = KI_BACK;
+  s_keymap[KeyboardButton::tab().get_index()]           = KI_TAB;
+  s_keymap[KeyboardButton::enter().get_index()]         = KI_RETURN;
+  s_keymap[KeyboardButton::escape().get_index()]        = KI_ESCAPE;
+  s_keymap[KeyboardButton::end().get_index()]           = KI_END;
+  s_keymap[KeyboardButton::home().get_index()]          = KI_HOME;
+  s_keymap[KeyboardButton::left().get_index()]          = KI_LEFT;
+  s_keymap[KeyboardButton::up().get_index()]            = KI_UP;
+  s_keymap[KeyboardButton::right().get_index()]         = KI_RIGHT;
+  s_keymap[KeyboardButton::down().get_index()]          = KI_DOWN;
+  s_keymap[KeyboardButton::insert().get_index()]        = KI_INSERT;
+  s_keymap[KeyboardButton::del().get_index()]           = KI_DELETE;
+  s_keymap[KeyboardButton::caps_lock().get_index()]     = KI_CAPITAL;
+  s_keymap[KeyboardButton::f1().get_index()]            = KI_F1;
+  s_keymap[KeyboardButton::f2().get_index()]            = KI_F2;
+  s_keymap[KeyboardButton::f3().get_index()]            = KI_F3;
+  s_keymap[KeyboardButton::f4().get_index()]            = KI_F4;
+  s_keymap[KeyboardButton::f5().get_index()]            = KI_F5;
+  s_keymap[KeyboardButton::f6().get_index()]            = KI_F6;
+  s_keymap[KeyboardButton::f7().get_index()]            = KI_F7;
+  s_keymap[KeyboardButton::f8().get_index()]            = KI_F8;
+  s_keymap[KeyboardButton::f9().get_index()]            = KI_F9;
+  s_keymap[KeyboardButton::f10().get_index()]           = KI_F10;
+  s_keymap[KeyboardButton::f11().get_index()]           = KI_F11;
+  s_keymap[KeyboardButton::f12().get_index()]           = KI_F12;
+  s_keymap[KeyboardButton::f13().get_index()]           = KI_F13;
+  s_keymap[KeyboardButton::f14().get_index()]           = KI_F14;
+  s_keymap[KeyboardButton::f15().get_index()]           = KI_F15;
+  s_keymap[KeyboardButton::f16().get_index()]           = KI_F16;
+  s_keymap[KeyboardButton::help().get_index()]          = KI_HELP;
+  s_keymap[KeyboardButton::lcontrol().get_index()]      = KI_LCONTROL;
+  s_keymap[KeyboardButton::lshift().get_index()]        = KI_LSHIFT;
+  s_keymap[KeyboardButton::num_lock().get_index()]      = KI_NUMLOCK;
+  s_keymap[KeyboardButton::page_down().get_index()]     = KI_NEXT;
+  s_keymap[KeyboardButton::page_up().get_index()]       = KI_PRIOR;
+  s_keymap[KeyboardButton::pause().get_index()]         = KI_PAUSE;
+  s_keymap[KeyboardButton::print_screen().get_index()]  = KI_SNAPSHOT;
+  s_keymap[KeyboardButton::rcontrol().get_index()]      = KI_RCONTROL;
+  s_keymap[KeyboardButton::rshift().get_index()]        = KI_RSHIFT;
+  s_keymap[KeyboardButton::scroll_lock().get_index()]   = KI_SCROLL;
+
+  s_keymap[KeyboardButton::ascii_key(';').get_index()]  = KI_OEM_1;
+  s_keymap[KeyboardButton::ascii_key('=').get_index()]  = KI_OEM_PLUS;
+  s_keymap[KeyboardButton::ascii_key(',').get_index()]  = KI_OEM_COMMA;
+  s_keymap[KeyboardButton::ascii_key('-').get_index()]  = KI_OEM_MINUS;
+  s_keymap[KeyboardButton::ascii_key('.').get_index()]  = KI_OEM_PERIOD;
+  s_keymap[KeyboardButton::ascii_key('/').get_index()]  = KI_OEM_2;
+  s_keymap[KeyboardButton::ascii_key('`').get_index()]  = KI_OEM_3;
+  s_keymap[KeyboardButton::ascii_key('[').get_index()]  = KI_OEM_4;
+  s_keymap[KeyboardButton::ascii_key('\\').get_index()] = KI_OEM_5;
+  s_keymap[KeyboardButton::ascii_key(']').get_index()]  = KI_OEM_6;
+  s_keymap[KeyboardButton::ascii_key('<').get_index()]  = KI_OEM_102;
+
+  for (char c = 'a'; c <= 'z'; ++c) {
+    s_keymap[KeyboardButton::ascii_key(c).get_index()] = (c - 'a') + KI_A;
+  }
+  for (char c = '0'; c <= '9'; ++c) {
+    s_keymap[KeyboardButton::ascii_key(c).get_index()] = (c - '0') + KI_0;
+  }
+}
+
+/**
+ *
+ */
+void RmlInputHandler::
+init_type() {
+  DataNode::init_type();
+  register_type(_type_handle, "RmlInputHandler",
+                DataNode::get_class_type());
+}
+
+/**
+ *
+ */
 RmlInputHandler::
 RmlInputHandler(const std::string &name) :
   DataNode(name),
@@ -35,86 +122,41 @@ RmlInputHandler(const std::string &name) :
   _button_events_input = define_input("button_events", ButtonEventList::get_class_type());
 }
 
+/**
+ *
+ */
 RmlInputHandler::
 ~RmlInputHandler() {
 }
 
 /**
- * Maps a Panda ButtonHandle to an RmlUi KeyIdentifier, or KI_UNKNOWN.
+ * Maps a Panda ButtonHandle to an RmlUi KeyIdentifier, or KI_UNKNOWN if
+ * the key has no RmlUi equivalent.
+ *
+ * The keymap is built on the first call, which happens after Panda's button
+ * registry is fully initialised.  A static mutex ensures thread-safety for
+ * the one-time build.
  */
 int RmlInputHandler::
 get_rml_key(const ButtonHandle handle) {
-  static pmap<int, int> keymap;
-  if (!keymap.empty()) {
-    auto it = keymap.find(handle.get_index());
-    return (it != keymap.end()) ? it->second : 0;
+  static Mutex keymap_lock;
+  static bool built = false;
+  if (!built) {
+    MutexHolder holder(keymap_lock);
+    if (!built) {
+      build_keymap();
+      built = true;
+    }
   }
-
-  keymap[KeyboardButton::space().get_index()]         = KI_SPACE;
-  keymap[KeyboardButton::backspace().get_index()]     = KI_BACK;
-  keymap[KeyboardButton::tab().get_index()]           = KI_TAB;
-  keymap[KeyboardButton::enter().get_index()]         = KI_RETURN;
-  keymap[KeyboardButton::escape().get_index()]        = KI_ESCAPE;
-  keymap[KeyboardButton::end().get_index()]           = KI_END;
-  keymap[KeyboardButton::home().get_index()]          = KI_HOME;
-  keymap[KeyboardButton::left().get_index()]          = KI_LEFT;
-  keymap[KeyboardButton::up().get_index()]            = KI_UP;
-  keymap[KeyboardButton::right().get_index()]         = KI_RIGHT;
-  keymap[KeyboardButton::down().get_index()]          = KI_DOWN;
-  keymap[KeyboardButton::insert().get_index()]        = KI_INSERT;
-  keymap[KeyboardButton::del().get_index()]           = KI_DELETE;
-  keymap[KeyboardButton::caps_lock().get_index()]     = KI_CAPITAL;
-  keymap[KeyboardButton::f1().get_index()]            = KI_F1;
-  keymap[KeyboardButton::f2().get_index()]            = KI_F2;
-  keymap[KeyboardButton::f3().get_index()]            = KI_F3;
-  keymap[KeyboardButton::f4().get_index()]            = KI_F4;
-  keymap[KeyboardButton::f5().get_index()]            = KI_F5;
-  keymap[KeyboardButton::f6().get_index()]            = KI_F6;
-  keymap[KeyboardButton::f7().get_index()]            = KI_F7;
-  keymap[KeyboardButton::f8().get_index()]            = KI_F8;
-  keymap[KeyboardButton::f9().get_index()]            = KI_F9;
-  keymap[KeyboardButton::f10().get_index()]           = KI_F10;
-  keymap[KeyboardButton::f11().get_index()]           = KI_F11;
-  keymap[KeyboardButton::f12().get_index()]           = KI_F12;
-  keymap[KeyboardButton::f13().get_index()]           = KI_F13;
-  keymap[KeyboardButton::f14().get_index()]           = KI_F14;
-  keymap[KeyboardButton::f15().get_index()]           = KI_F15;
-  keymap[KeyboardButton::f16().get_index()]           = KI_F16;
-  keymap[KeyboardButton::help().get_index()]          = KI_HELP;
-  keymap[KeyboardButton::lcontrol().get_index()]      = KI_LCONTROL;
-  keymap[KeyboardButton::lshift().get_index()]        = KI_LSHIFT;
-  keymap[KeyboardButton::num_lock().get_index()]      = KI_NUMLOCK;
-  keymap[KeyboardButton::page_down().get_index()]     = KI_NEXT;
-  keymap[KeyboardButton::page_up().get_index()]       = KI_PRIOR;
-  keymap[KeyboardButton::pause().get_index()]         = KI_PAUSE;
-  keymap[KeyboardButton::print_screen().get_index()]  = KI_SNAPSHOT;
-  keymap[KeyboardButton::rcontrol().get_index()]      = KI_RCONTROL;
-  keymap[KeyboardButton::rshift().get_index()]        = KI_RSHIFT;
-  keymap[KeyboardButton::scroll_lock().get_index()]   = KI_SCROLL;
-
-  keymap[KeyboardButton::ascii_key(';').get_index()]  = KI_OEM_1;
-  keymap[KeyboardButton::ascii_key('=').get_index()]  = KI_OEM_PLUS;
-  keymap[KeyboardButton::ascii_key(',').get_index()]  = KI_OEM_COMMA;
-  keymap[KeyboardButton::ascii_key('-').get_index()]  = KI_OEM_MINUS;
-  keymap[KeyboardButton::ascii_key('.').get_index()]  = KI_OEM_PERIOD;
-  keymap[KeyboardButton::ascii_key('/').get_index()]  = KI_OEM_2;
-  keymap[KeyboardButton::ascii_key('`').get_index()]  = KI_OEM_3;
-  keymap[KeyboardButton::ascii_key('[').get_index()]  = KI_OEM_4;
-  keymap[KeyboardButton::ascii_key('\\').get_index()] = KI_OEM_5;
-  keymap[KeyboardButton::ascii_key(']').get_index()]  = KI_OEM_6;
-  keymap[KeyboardButton::ascii_key('<').get_index()]  = KI_OEM_102;
-
-  for (char c = 'a'; c <= 'z'; ++c) {
-    keymap[KeyboardButton::ascii_key(c).get_index()] = (c - 'a') + KI_A;
-  }
-  for (char c = '0'; c <= '9'; ++c) {
-    keymap[KeyboardButton::ascii_key(c).get_index()] = (c - '0') + KI_0;
-  }
-
-  auto it = keymap.find(handle.get_index());
-  return (it != keymap.end()) ? it->second : 0;
+  auto it = s_keymap.find(handle.get_index());
+  return (it != s_keymap.end()) ? it->second : 0;
 }
 
+/**
+ * Accumulates keyboard and mouse events from the data graph each frame.
+ * Called on the data graph traversal thread; events are flushed into RmlUi
+ * by update_context() on the cull thread.
+ */
 void RmlInputHandler::
 do_transmit_data(DataGraphTraverser *, const DataNodeTransmit &input,
                  DataNodeTransmit &) {
@@ -197,7 +239,7 @@ do_transmit_data(DataGraphTraverser *, const DataNodeTransmit &input,
         break;
 
       case ButtonEvent::T_keystroke:
-        // Filter control characters; pass everything else as Unicode
+        // Filter control characters; pass everything else as Unicode.
         if (be._keycode > 0x1F &&
             (be._keycode < 0x7F || be._keycode > 0x9F)) {
           _text_input.push_back(be._keycode);
@@ -212,7 +254,7 @@ do_transmit_data(DataGraphTraverser *, const DataNodeTransmit &input,
 }
 
 /**
- * Flush accumulated input into the RmlUi context, then call Update().
+ * Flushes accumulated input into the RmlUi context, then calls Update().
  * Called by RmlRegion::do_cull before calling Render().
  */
 void RmlInputHandler::
@@ -249,10 +291,6 @@ update_context(Rml::Context *context, int xoffs, int yoffs) {
 
   for (auto &[btn, down] : _mouse_buttons) {
     if (down) {
-      rmlui_cat.debug()
-        << "MouseButtonDown btn=" << btn
-        << " at rml=(" << (int)_mouse_xy.get_x() - xoffs
-        << ", " << (int)_mouse_xy.get_y() - yoffs << ")\n";
       context->ProcessMouseButtonDown(btn, _modifiers);
     } else {
       context->ProcessMouseButtonUp(btn, _modifiers);

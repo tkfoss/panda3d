@@ -14,6 +14,9 @@
 #include "rmlFileInterface.h"
 #include "virtualFileSystem.h"
 
+/**
+ * If vfs is nullptr, uses the global VirtualFileSystem.
+ */
 RmlFileInterface::
 RmlFileInterface(VirtualFileSystem *vfs) : _vfs(vfs) {
   if (_vfs == nullptr) {
@@ -21,6 +24,11 @@ RmlFileInterface(VirtualFileSystem *vfs) : _vfs(vfs) {
   }
 }
 
+/**
+ * Opens path for reading via the VirtualFileSystem.  Falls back to the
+ * model-path if the path is not found as an absolute filename.  Returns 0
+ * on failure.
+ */
 Rml::FileHandle RmlFileInterface::
 Open(const Rml::String &path) {
   if (rmlui_cat.is_debug()) {
@@ -55,6 +63,9 @@ Open(const Rml::String &path) {
   return (Rml::FileHandle) handle;
 }
 
+/**
+ * Closes an open file handle.
+ */
 void RmlFileInterface::
 Close(Rml::FileHandle file) {
   VirtualFileHandle *handle = (VirtualFileHandle *) file;
@@ -65,6 +76,10 @@ Close(Rml::FileHandle file) {
   delete handle;
 }
 
+/**
+ * Reads up to size bytes from the file into buffer.  Returns the number of
+ * bytes actually read.
+ */
 size_t RmlFileInterface::
 Read(void *buffer, size_t size, Rml::FileHandle file) {
   VirtualFileHandle *handle = (VirtualFileHandle *) file;
@@ -75,6 +90,10 @@ Read(void *buffer, size_t size, Rml::FileHandle file) {
   return handle->_stream->gcount();
 }
 
+/**
+ * Seeks within the file.  origin is one of SEEK_SET, SEEK_CUR, SEEK_END.
+ * Returns true on success.
+ */
 bool RmlFileInterface::
 Seek(Rml::FileHandle file, long offset, int origin) {
   VirtualFileHandle *handle = (VirtualFileHandle *) file;
@@ -95,6 +114,9 @@ Seek(Rml::FileHandle file, long offset, int origin) {
   return !handle->_stream->fail();
 }
 
+/**
+ * Returns the current read position within the file.
+ */
 size_t RmlFileInterface::
 Tell(Rml::FileHandle file) {
   VirtualFileHandle *handle = (VirtualFileHandle *) file;
@@ -104,6 +126,9 @@ Tell(Rml::FileHandle file) {
   return handle->_stream->tellg();
 }
 
+/**
+ * Returns the total size of the file in bytes.
+ */
 size_t RmlFileInterface::
 Length(Rml::FileHandle file) {
   VirtualFileHandle *handle = (VirtualFileHandle *) file;

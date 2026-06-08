@@ -27,6 +27,10 @@
 
 TypeHandle RmlRegion::_type_handle;
 
+/**
+ * Returns a Python-accessible wrapper around the underlying Rml::Context.
+ * A new wrapper object is created on each call; the context itself is shared.
+ */
 PT(RmlContext) RmlRegion::
 get_context() const {
   if (_context == nullptr) {
@@ -67,6 +71,9 @@ RmlRegion(GraphicsOutput *window, const LVecBase4 &dr_dimensions,
   set_camera(NodePath(cam));
 }
 
+/**
+ *
+ */
 RmlRegion::
 ~RmlRegion() {
   if (_context != nullptr) {
@@ -115,6 +122,11 @@ do_cull(CullHandler *cull_handler, SceneSetup *scene_setup,
   trav->end_traverse();
 }
 
+/**
+ * Initialises the RmlUi visual debugger for this context.  Returns true on
+ * success.  Has no effect and returns false if the library was not built with
+ * HAVE_RMLUI_DEBUGGER.
+ */
 bool RmlRegion::
 init_debugger() {
 #ifdef HAVE_RMLUI_DEBUGGER
@@ -124,6 +136,9 @@ init_debugger() {
 #endif
 }
 
+/**
+ * Shows or hides the RmlUi visual debugger overlay.
+ */
 void RmlRegion::
 set_debugger_visible(bool visible) {
 #ifdef HAVE_RMLUI_DEBUGGER
@@ -131,6 +146,9 @@ set_debugger_visible(bool visible) {
 #endif
 }
 
+/**
+ * Returns true if the RmlUi visual debugger is currently visible.
+ */
 bool RmlRegion::
 is_debugger_visible() const {
 #ifdef HAVE_RMLUI_DEBUGGER

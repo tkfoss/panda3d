@@ -19,6 +19,7 @@
 #include "pointerTo.h"
 
 class RmlDocument;
+class RmlDataModel;
 
 #ifndef CPPPARSER
 #include <RmlUi/Core/Context.h>
@@ -43,6 +44,10 @@ PUBLISHED:
   int get_height() const;
   std::string get_name() const;
 
+  PT(RmlDataModel) create_data_model(const std::string &name);
+  PT(RmlDataModel) get_data_model(const std::string &name);
+  bool remove_data_model(const std::string &name);
+
   MAKE_PROPERTY(width, get_width);
   MAKE_PROPERTY(height, get_height);
   MAKE_PROPERTY(name, get_name);
@@ -51,8 +56,13 @@ public:
   RmlContext() = default;
 #ifndef CPPPARSER
   explicit RmlContext(Rml::Context *ctx) : _ctx(ctx) {}
+
+  // Returns the underlying Rml::Context pointer.  The pointer is non-owning;
+  // it must not be used after the owning RmlRegion has been destroyed.
   Rml::Context *get_raw() const { return _ctx; }
+
 private:
+  friend class RmlRegion;
   Rml::Context *_ctx = nullptr;
 #endif
 };

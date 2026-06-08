@@ -21,6 +21,7 @@
 #include "graphicsOutput.h"
 #include "graphicsStateGuardian.h"
 #include "lmatrix.h"
+#include "mutexHolder.h"
 #include "pvector.h"
 #include "renderState.h"
 #include "shader.h"
@@ -37,17 +38,21 @@
  * traverser with full layer / filter / shader support.
  *
  * Layer lifecycle (PushLayer / CompositeLayers / PopLayer):
- *   PushLayer   — calls buf->begin_frame(FM_render) to bind the layer FBO;
- *                 subsequent RenderGeometry calls go to that FBO via the GSG.
- *   CompositeLayers — calls end_frame on the source, then rebinds the
- *                 destination and submits a fullscreen quad with the
- *                 post-processed source texture.
- *   PopLayer    — ends the current layer frame and rebinds the parent.
+ *   PushLayer        — allocates a layer buffer, calls begin_layer() to bind
+ *                      its FBO; subsequent RenderGeometry calls go there.
+ *   CompositeLayers  — ends the source layer, applies the filter chain via
+ *                      ping-pong scratch buffers, then blits the result into
+ *                      the destination with a fullscreen quad.
+ *   PopLayer         — ends and frees the current layer, rebinding the parent.
  *
  * All filter/shader programs are compiled from embedded GLSL strings via
- * Shader::make(SL_GLSL).  glslang compiles them to SPIR-V; the GL backend
- * cross-compiles via SPIRV-Cross; the Vulkan backend uses SPIR-V natively.
- * No raw GL calls anywhere — the implementation is fully backend-agnostic.
+ * Shader::make(SL_GLSL).  No raw GL calls — the implementation is fully
+ * backend-agnostic.
+ *
+ * Thread safety: render() holds _lock for its entire duration.
+ * CompileGeometry, CompileFilter, CompileShader and their Release counterparts
+ * must be called from the same thread as render(), or the caller must
+ * synchronise externally.
  */
 class RmlRenderInterface
 #ifndef CPPPARSER
@@ -58,7 +63,8 @@ public:
   // Called once by RmlRegion after the window is created.
   void init(GraphicsOutput *window);
 
-  // Called once per frame from RmlRegion::do_cull.
+  // Called once per frame from RmlRegion::do_cull.  trav, gsg, and
+  // current_thread must remain valid for the duration of the call.
   void render(Rml::Context *context, CullTraverser *trav,
               GraphicsStateGuardian *gsg, Thread *current_thread);
 
@@ -110,11 +116,11 @@ public:
   // One pre-allocated RGBA offscreen buffer for a single UI layer.
   // Public so the file-scope make_layer_buffer helper can name the type.
   struct LayerBuffer {
-    PT(GraphicsOutput) buf;
-    PT(DisplayRegion)  dr;   // a plain DR on buf, used for clear/prepare
-    PT(Texture)        tex;
-    bool               frame_open = false;
-    bool               in_use     = false;
+    PT(GraphicsOutput) _buf;
+    PT(DisplayRegion)  _dr;         // plain DR on _buf, used for clear/prepare
+    PT(Texture)        _tex;
+    bool               _frame_open = false;
+    bool               _in_use     = false;
   };
 
 protected:
@@ -124,37 +130,42 @@ protected:
 
   // One entry on the active layer stack.
   struct LayerEntry {
-    Rml::LayerHandle handle;  // 0 = main window; else (LayerBuffer*)+1
-    Rml::Rectanglei  scissor; // scissor rect saved at push time
+    Rml::LayerHandle _handle;  // 0 = main window; else (LayerBuffer*)+1
+    Rml::Rectanglei  _scissor; // scissor rect saved at push time
   };
 
   // -----------------------------------------------------------------------
-  // Filter / shader data structs (mirror GL3 reference renderer)
+  // Filter / shader data structs
   // -----------------------------------------------------------------------
-  enum class FilterType { Invalid, Passthrough, Blur, DropShadow, ColorMatrix, MaskImage };
+  enum class FilterType {
+    INVALID, PASSTHROUGH, BLUR, DROP_SHADOW, COLOR_MATRIX, MASK_IMAGE
+  };
+
   struct CompiledFilterData {
-    FilterType  type         = FilterType::Invalid;
-    float       blend_factor = 1.0f; // opacity passthrough
-    float       sigma        = 0.0f; // blur / drop-shadow
-    LVecBase2f  offset;              // drop-shadow pixel offset
-    LColor      color;               // drop-shadow tint
-    LMatrix4f   color_matrix;        // color-matrix filters
-    PT(Texture) mask_tex;            // mask-image
+    FilterType  _type         = FilterType::INVALID;
+    float       _blend_factor = 1.0f; // opacity passthrough
+    float       _sigma        = 0.0f; // blur / drop-shadow
+    LVecBase2f  _offset;              // drop-shadow pixel offset
+    LColor      _color;               // drop-shadow tint
+    LMatrix4f   _color_matrix;        // color-matrix filters
+    PT(Texture) _mask_tex;            // mask-image
   };
 
-  enum class ShaderType { Invalid, Gradient, Creation };
-  enum class GradientFunc { Linear, Radial, Conic,
-                            RepeatingLinear, RepeatingRadial, RepeatingConic };
+  enum class ShaderType { INVALID, GRADIENT, CREATION };
+  enum class GradientFunc {
+    LINEAR, RADIAL, CONIC,
+    REPEATING_LINEAR, REPEATING_RADIAL, REPEATING_CONIC
+  };
 
   static constexpr int MAX_STOPS = 16;
   struct CompiledShaderData {
-    ShaderType   type           = ShaderType::Invalid;
-    GradientFunc gradient_func  = GradientFunc::Linear;
-    LVecBase2f   p, v;
-    int          num_stops      = 0;
-    float        stop_positions[MAX_STOPS];
-    LVecBase4f   stop_colors[MAX_STOPS];
-    LVecBase2f   dimensions;    // creation shader
+    ShaderType   _type          = ShaderType::INVALID;
+    GradientFunc _gradient_func = GradientFunc::LINEAR;
+    LVecBase2f   _p, _v;
+    int          _num_stops     = 0;
+    float        _stop_positions[MAX_STOPS];
+    LVecBase4f   _stop_colors[MAX_STOPS];
+    LVecBase2f   _dimensions;    // creation shader
   };
 
   // -----------------------------------------------------------------------
@@ -179,12 +190,12 @@ protected:
   void         free_layer(LayerBuffer *lb);
   LayerBuffer *get_layer(Rml::LayerHandle handle); // nullptr if handle==0
 
-  // Bind a layer buffer's FBO as the current render target.
-  // Clears to transparent black.  Asserts lb != nullptr.
+  // Bind a layer buffer's FBO as the current render target, clearing to
+  // transparent black.  Asserts lb != nullptr.
   void begin_layer(LayerBuffer *lb);
 
-  // End a layer's frame, flushing its texture.  Rebinds destination.
-  // dest may be nullptr (= main window).
+  // End a layer's frame, flushing its texture.  Rebinds dest (nullptr = main
+  // window).
   void end_layer(LayerBuffer *lb, LayerBuffer *dest);
 
   // Apply filters in ping-pong between _scratch[0] and _scratch[1].

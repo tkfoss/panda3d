@@ -57,18 +57,18 @@
 // Passthrough — blit one texture to the current FBO, optionally scaled
 // ---------------------------------------------------------------------------
 static const char *s_vert_passthrough = R"GLSL(
-#version 330
-layout(location=0) in vec2 p3d_Vertex;
-layout(location=4) in vec2 p3d_MultiTexCoord0;
+#version 150
+in vec3 p3d_Vertex;
+in vec2 p3d_MultiTexCoord0;
 out vec2 v_uv;
 void main() {
     v_uv = p3d_MultiTexCoord0;
-    gl_Position = vec4(p3d_Vertex, 0.0, 1.0);
+    gl_Position = vec4(p3d_Vertex.xy, 0.0, 1.0);
 }
 )GLSL";
 
 static const char *s_frag_passthrough = R"GLSL(
-#version 330
+#version 150
 uniform sampler2D p3d_Texture0;
 uniform float u_blend_factor;
 in  vec2 v_uv;
@@ -82,7 +82,7 @@ void main() {
 // Color matrix — brightness / contrast / grayscale / sepia / hue-rotate / etc.
 // ---------------------------------------------------------------------------
 static const char *s_frag_color_matrix = R"GLSL(
-#version 330
+#version 150
 uniform sampler2D p3d_Texture0;
 uniform mat4 u_color_matrix;
 in  vec2 v_uv;
@@ -97,7 +97,7 @@ void main() {
 // Blend mask — multiply source rgb by mask alpha  (CSS mask-image)
 // ---------------------------------------------------------------------------
 static const char *s_frag_blend_mask = R"GLSL(
-#version 330
+#version 150
 uniform sampler2D p3d_Texture0;
 uniform sampler2D u_mask_tex;
 in  vec2 v_uv;
@@ -113,7 +113,7 @@ void main() {
 // Drop shadow — blurred alpha tinted by shadow color, composited with original
 // ---------------------------------------------------------------------------
 static const char *s_frag_drop_shadow = R"GLSL(
-#version 330
+#version 150
 uniform sampler2D p3d_Texture0;
 uniform vec4  u_shadow_color;
 uniform vec2  u_offset;
@@ -129,14 +129,19 @@ void main() {
 
 // ---------------------------------------------------------------------------
 // Separable Gaussian blur (single axis per pass, 7 taps)
+//
+// CPU weight array: index 0 = centre tap, index 3 = outermost tap.
+// GLSL weight index: wi = abs(i - 3), so i==3 → wi=0 (centre).
+// The two conventions are consistent: both treat index 0 as the
+// highest-weight (centre) sample.
 // ---------------------------------------------------------------------------
 #define BLUR_TAPS    7
 #define BLUR_WEIGHTS 4   // ceil(BLUR_TAPS / 2)
 
 static const char *s_vert_blur = R"GLSL(
-#version 330
-layout(location=0) in vec2 p3d_Vertex;
-layout(location=4) in vec2 p3d_MultiTexCoord0;
+#version 150
+in vec3 p3d_Vertex;
+in vec2 p3d_MultiTexCoord0;
 uniform vec2  u_axis;
 uniform vec2  u_inv_size;
 out vec2 v_uv[7];
@@ -145,12 +150,12 @@ void main() {
         float d = float(i - 3);
         v_uv[i] = p3d_MultiTexCoord0 + u_axis * d * u_inv_size;
     }
-    gl_Position = vec4(p3d_Vertex, 0.0, 1.0);
+    gl_Position = vec4(p3d_Vertex.xy, 0.0, 1.0);
 }
 )GLSL";
 
 static const char *s_frag_blur = R"GLSL(
-#version 330
+#version 150
 uniform sampler2D p3d_Texture0;
 uniform float u_weights[4];
 uniform vec2  u_uv_min;
@@ -172,10 +177,10 @@ void main() {
 // Gradient decorator (linear / radial / conic, repeating variants, 16 stops)
 // ---------------------------------------------------------------------------
 static const char *s_vert_ui = R"GLSL(
-#version 330
-layout(location=0) in vec2 p3d_Vertex;
-layout(location=3) in vec4 p3d_Color;
-layout(location=4) in vec2 p3d_MultiTexCoord0;
+#version 150
+in vec2 p3d_Vertex;
+in vec4 p3d_Color;
+in vec2 p3d_MultiTexCoord0;
 uniform mat4 p3d_ModelViewProjectionMatrix;
 out vec2 v_uv;
 out vec4 v_color;
@@ -187,7 +192,7 @@ void main() {
 )GLSL";
 
 static const char *s_frag_gradient = R"GLSL(
-#version 330
+#version 150
 #define LINEAR           0
 #define RADIAL           1
 #define CONIC            2
@@ -224,7 +229,8 @@ void main() {
         vec2 V = R * (v_uv - u_p);
         t = 0.5 + atan(-V.x, V.y) / (2.0 * PI);
     }
-    if (u_func == REPEATING_LINEAR || u_func == REPEATING_RADIAL || u_func == REPEATING_CONIC) {
+    if (u_func == REPEATING_LINEAR || u_func == REPEATING_RADIAL ||
+        u_func == REPEATING_CONIC) {
         float t0 = u_stop_positions[0];
         float t1 = u_stop_positions[u_num_stops - 1];
         t = t0 + mod(t - t0, t1 - t0);
@@ -237,7 +243,7 @@ void main() {
 // Creation procedural shader (Danilo Guanabara / shadertoy)
 // ---------------------------------------------------------------------------
 static const char *s_frag_creation = R"GLSL(
-#version 330
+#version 150
 uniform float u_time;
 uniform vec2  u_dimensions;
 in  vec2 v_uv;
@@ -255,7 +261,7 @@ void main() {
         float z = t + float(i) * 0.07;
         l  = length(p);
         uv += p / l * (sin(z) + 1.0) * abs(sin(l * 9.0 - z - z));
-        c[i] = 0.01 / length(mod(uv, 1.0) - 0.5);
+        c[i] = 0.01 / length(mod(uv, vec2(1.0)) - vec2(0.5));
     }
     o_color = vec4(c / l, v_color.a);
 }
@@ -265,6 +271,10 @@ void main() {
 // Internal helpers
 // ===========================================================================
 
+/**
+ * Computes normalised Gaussian weights for a 7-tap half-kernel.
+ * out[0] is the centre weight; out[3] is the outermost tap weight.
+ */
 static void compute_blur_weights(float sigma, float out[BLUR_WEIGHTS]) {
   double sum = 0.0;
   for (int i = 0; i < BLUR_WEIGHTS; ++i) {
@@ -276,16 +286,18 @@ static void compute_blur_weights(float sigma, float out[BLUR_WEIGHTS]) {
   }
 }
 
-// Build a fullscreen NDC quad (positions -1..1, UVs 0..1).
+/**
+ * Builds a fullscreen NDC quad (positions -1..1, UVs 0..1).
+ */
 static CPT(Geom) build_fullscreen_quad() {
   struct V { float x, y, u, v; };
   static const V verts[4] = {
-    {-1.f,-1.f, 0.f, 0.f},
-    { 1.f,-1.f, 1.f, 0.f},
-    { 1.f, 1.f, 1.f, 1.f},
-    {-1.f, 1.f, 0.f, 1.f},
+    {-1.f, -1.f, 0.f, 0.f},
+    { 1.f, -1.f, 1.f, 0.f},
+    { 1.f,  1.f, 1.f, 1.f},
+    {-1.f,  1.f, 0.f, 1.f},
   };
-  static const int idx[6] = {0,1,2, 0,2,3};
+  static const int idx[6] = {0, 1, 2, 0, 2, 3};
 
   PT(GeomVertexData) vd = new GeomVertexData(
     "fsq", GeomVertexFormat::get_v3c4t2(), GeomEnums::UH_static);
@@ -309,7 +321,9 @@ static CPT(Geom) build_fullscreen_quad() {
   return g;
 }
 
-// Create a single RGBA GraphicsBuffer sharing the GSG of parent_window.
+/**
+ * Creates a single RGBA GraphicsBuffer sharing the GSG of parent_window.
+ */
 static RmlRenderInterface::LayerBuffer *
 make_layer_buffer(GraphicsOutput *parent_window, const std::string &name) {
   FrameBufferProperties fbp;
@@ -342,11 +356,11 @@ make_layer_buffer(GraphicsOutput *parent_window, const std::string &name) {
   dr->set_clear_color(LColor(0, 0, 0, 0));
 
   auto *lb = new RmlRenderInterface::LayerBuffer;
-  lb->buf   = buf;
-  lb->dr    = dr;
-  lb->tex   = tex;
-  lb->in_use     = false;
-  lb->frame_open = false;
+  lb->_buf       = buf;
+  lb->_dr        = dr;
+  lb->_tex       = tex;
+  lb->_in_use    = false;
+  lb->_frame_open = false;
   return lb;
 }
 
@@ -354,6 +368,10 @@ make_layer_buffer(GraphicsOutput *parent_window, const std::string &name) {
 // init() — allocate layer pool
 // ===========================================================================
 
+/**
+ * Called once by RmlRegion after the window is created.  Pre-allocates the
+ * layer buffer pool and scratch buffers.
+ */
 void RmlRenderInterface::
 init(GraphicsOutput *window) {
   nassertv(window != nullptr);
@@ -368,7 +386,9 @@ init(GraphicsOutput *window) {
   for (int i = 0; i < 2; ++i) {
     _scratch[i] = make_layer_buffer(window,
       std::string("rmlui-scratch-") + std::to_string(i));
-    if (_scratch[i]) _scratch[i]->in_use = true; // never returned to pool
+    // Mark scratch buffers permanently in-use so they are never returned to
+    // the layer pool.
+    if (_scratch[i]) _scratch[i]->_in_use = true;
   }
 }
 
@@ -376,6 +396,9 @@ init(GraphicsOutput *window) {
 // Lazy shader compilation
 // ===========================================================================
 
+/**
+ * Compiles all embedded GLSL filter/shader programs on first use.
+ */
 void RmlRenderInterface::
 ensure_shaders() {
   if (_shaders_ready) return;
@@ -413,18 +436,21 @@ ensure_shaders() {
   _shader_drop_shadow  = make_state(s_vert_passthrough, s_frag_drop_shadow,  blend_replace());
   _shader_blur         = make_state(s_vert_blur,        s_frag_blur,         blend_replace());
   _shader_gradient     = make_state(s_vert_ui,          s_frag_gradient,     blend_over());
-  _shader_creation     = make_state(s_vert_ui,          s_frag_creation,     blend_over());
+  // _shader_creation compiled lazily in RenderShader on first use.
 }
 
 // ===========================================================================
 // Layer pool management
 // ===========================================================================
 
+/**
+ * Returns an unused LayerBuffer from the pool, growing the pool if needed.
+ */
 RmlRenderInterface::LayerBuffer *RmlRenderInterface::
 alloc_layer() {
   for (LayerBuffer *lb : _layer_pool) {
-    if (!lb->in_use) {
-      lb->in_use = true;
+    if (!lb->_in_use) {
+      lb->_in_use = true;
       return lb;
     }
   }
@@ -432,19 +458,45 @@ alloc_layer() {
   LayerBuffer *lb = make_layer_buffer(
     _window, "rmlui-layer-dyn-" + std::to_string(_layer_pool.size()));
   if (lb) {
-    lb->in_use = true;
+    lb->_in_use = true;
     _layer_pool.push_back(lb);
   }
   return lb;
 }
 
+/**
+ * Returns a layer buffer to the pool.  If the pool has grown past the initial
+ * 4-buffer watermark and this buffer was a dynamically-allocated overflow
+ * entry, delete it to shrink the pool back down.
+ */
 void RmlRenderInterface::
 free_layer(LayerBuffer *lb) {
   nassertv(lb != nullptr);
-  lb->in_use     = false;
-  lb->frame_open = false;
+  lb->_in_use    = false;
+  lb->_frame_open = false;
+
+  // Trim overflow: remove and delete any excess free buffers beyond 4.
+  static const size_t POOL_HWM = 4;
+  if (_layer_pool.size() > POOL_HWM) {
+    for (auto it = _layer_pool.end(); it != _layer_pool.begin(); ) {
+      --it;
+      LayerBuffer *candidate = *it;
+      if (!candidate->_in_use) {
+        _layer_pool.erase(it);
+        if (candidate->_buf) candidate->_buf->request_close();
+        delete candidate;
+        if (_layer_pool.size() <= POOL_HWM) break;
+        // reset iterator after erase
+        it = _layer_pool.end();
+      }
+    }
+  }
 }
 
+/**
+ * Decodes a LayerHandle back to a LayerBuffer pointer.  Returns nullptr for
+ * the main-window handle (0).
+ */
 RmlRenderInterface::LayerBuffer *RmlRenderInterface::
 get_layer(Rml::LayerHandle handle) {
   if (handle == 0) return nullptr;
@@ -455,44 +507,52 @@ get_layer(Rml::LayerHandle handle) {
 // Frame management: begin / end a layer buffer
 // ===========================================================================
 
+/**
+ * Binds lb's FBO as the current render target and clears to transparent black.
+ */
 void RmlRenderInterface::
 begin_layer(LayerBuffer *lb) {
   nassertv(lb != nullptr && _gsg != nullptr && _thread != nullptr);
-  if (lb->frame_open) return;
+  if (lb->_frame_open) return;
 
-  if (!lb->buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
+  if (!lb->_buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
     rmlui_cat.error() << "begin_frame failed on layer buffer\n";
     return;
   }
-  lb->frame_open = true;
+  lb->_frame_open = true;
 
-  // Clear to transparent black.
-  lb->buf->clear(_thread);
-  DisplayRegionPipelineReader dr_reader(lb->dr, _thread);
+  lb->_buf->clear(_thread);
+  DisplayRegionPipelineReader dr_reader(lb->_dr, _thread);
   _gsg->prepare_display_region(&dr_reader);
 }
 
+/**
+ * Ends lb's frame (flushing its FBO to texture), then rebinds dest.
+ * dest may be nullptr to rebind the main window.
+ */
 void RmlRenderInterface::
 end_layer(LayerBuffer *lb, LayerBuffer *dest) {
-  // End the source layer's frame (flushes FBO → texture).
-  if (lb != nullptr && lb->frame_open) {
-    lb->buf->end_frame(GraphicsOutput::FM_render, _thread);
-    lb->frame_open = false;
+  // Flush the source layer's FBO to its texture.
+  if (lb != nullptr && lb->_frame_open) {
+    lb->_buf->end_frame(GraphicsOutput::FM_render, _thread);
+    lb->_frame_open = false;
   }
 
   // Rebind the destination FBO so subsequent draw calls go there.
   if (dest != nullptr) {
-    if (!dest->frame_open) {
-      dest->buf->begin_frame(GraphicsOutput::FM_render, _thread);
-      dest->frame_open = true;
+    if (!dest->_frame_open) {
+      if (!dest->_buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
+        rmlui_cat.error() << "begin_frame failed on destination layer\n";
+        return;
+      }
+      dest->_frame_open = true;
     }
-    DisplayRegionPipelineReader dr_reader(dest->dr, _thread);
+    DisplayRegionPipelineReader dr_reader(dest->_dr, _thread);
     _gsg->prepare_display_region(&dr_reader);
   } else {
-    // Rebind the main window.  FM_parasite just re-activates the context.
+    // Rebind the main window.  FM_parasite re-activates the context without
+    // clearing it; the engine's change_scenes already ran before do_cull.
     _window->begin_frame(GraphicsOutput::FM_parasite, _thread);
-    // prepare_display_region is not strictly required here; the engine's
-    // change_scenes already ran before our do_cull was called.
   }
 }
 
@@ -500,6 +560,12 @@ end_layer(LayerBuffer *lb, LayerBuffer *dest) {
 // render() — drive one frame
 // ===========================================================================
 
+/**
+ * Called once per frame by RmlRegion::do_cull.  Drives context->Render(),
+ * which dispatches into the RenderGeometry / PushLayer / CompositeLayers etc.
+ * callbacks below.  trav, gsg, and current_thread must remain valid for the
+ * duration of the call.
+ */
 void RmlRenderInterface::
 render(Rml::Context *context, CullTraverser *trav,
        GraphicsStateGuardian *gsg, Thread *current_thread) {
@@ -527,30 +593,30 @@ render(Rml::Context *context, CullTraverser *trav,
 
   _layer_stack.clear();
   LayerEntry base;
-  base.handle  = 0;
-  base.scissor = Rml::Rectanglei::FromSize({_dimensions.x, _dimensions.y});
+  base._handle  = 0;
+  base._scissor = Rml::Rectanglei::FromSize({_dimensions.x, _dimensions.y});
   _layer_stack.push_back(base);
 
   context->Render();
 
-  // Sanity: any unclosed layers are an RmlUi bug, but clean up regardless.
+  // Any unclosed layers indicate an RmlUi bug; clean up defensively.
   while (_layer_stack.size() > 1) {
     LayerEntry top = _layer_stack.back();
     _layer_stack.pop_back();
-    if (top.handle != 0) {
-      LayerBuffer *lb = get_layer(top.handle);
-      if (lb && lb->frame_open) {
-        lb->buf->end_frame(GraphicsOutput::FM_render, _thread);
-        lb->frame_open = false;
+    if (top._handle != 0) {
+      LayerBuffer *lb = get_layer(top._handle);
+      if (lb && lb->_frame_open) {
+        lb->_buf->end_frame(GraphicsOutput::FM_render, _thread);
+        lb->_frame_open = false;
       }
       free_layer(lb);
     }
   }
   _layer_stack.clear();
 
-  _trav   = nullptr;
-  _gsg    = nullptr;
-  _thread = nullptr;
+  _trav          = nullptr;
+  _gsg           = nullptr;
+  _thread        = nullptr;
   _net_transform = nullptr;
   _net_state     = nullptr;
 }
@@ -559,6 +625,9 @@ render(Rml::Context *context, CullTraverser *trav,
 // Internal geometry helpers
 // ===========================================================================
 
+/**
+ * Builds a Panda3D Geom from an RmlUi vertex/index span.
+ */
 PT(Geom) RmlRenderInterface::
 make_geom(Rml::Span<const Rml::Vertex> vertices,
           Rml::Span<const int> indices,
@@ -577,12 +646,11 @@ make_geom(Rml::Span<const Rml::Vertex> vertices,
     cw.add_data4i(v.colour.red, v.colour.green,
                   v.colour.blue, v.colour.alpha);
     // Pass tex_coords verbatim.  RmlUi uses two conventions:
-    //   • image textures:  0..1 normalised, (0,0)=top-left (CSS).
-    //   • shader geometry: pixel-space position (gradient p0/p1 coords).
-    // Both conventions share the same CSS y-down direction.  The GL3
-    // reference renderer also passes tex_coords unchanged.  Image textures
-    // are loaded with set_flip_y(true) so their (0,0) is already top-left
-    // from Panda's perspective, making the UVs consistent.
+    //   image textures:  0..1 normalised, (0,0)=top-left (CSS).
+    //   shader geometry: pixel-space position (gradient p0/p1 coords).
+    // Both share the CSS y-down direction.  Image textures are loaded with
+    // a Y-flip (see LoadTexture) so their (0,0) is already top-left from
+    // Panda's perspective, keeping both conventions consistent.
     tw.add_data2f(v.tex_coord.x, v.tex_coord.y);
   }
 
@@ -597,6 +665,10 @@ make_geom(Rml::Span<const Rml::Vertex> vertices,
   return g;
 }
 
+/**
+ * Submits a compiled Geom with the given render state to the active cull
+ * handler, applying the current scissor and CSS transform.
+ */
 void RmlRenderInterface::
 render_geom(const Geom *geom, const RenderState *state, Rml::Vector2f translation) {
   LVector3 off = LVector3::right() * translation.x + LVector3::up() * translation.y;
@@ -612,7 +684,6 @@ render_geom(const Geom *geom, const RenderState *state, Rml::Vector2f translatio
     full = full->add_attrib(ScissorAttrib::make(sc));
   }
 
-  // _css_transform is set by SetTransform() for CSS transform: properties.
   CPT(TransformState) model =
     _css_transform != nullptr
       ? _css_transform->compose(TransformState::make_pos(off))
@@ -625,17 +696,17 @@ render_geom(const Geom *geom, const RenderState *state, Rml::Vector2f translatio
   _trav->get_cull_handler()->record_object(std::move(obj), _trav);
 }
 
+/**
+ * Submits a fullscreen NDC quad with tex wired into the state's ShaderAttrib.
+ */
 void RmlRenderInterface::
 composite_quad(CPT(RenderState) state, PT(Texture) tex) {
-  // Wire the texture into the ShaderAttrib of the given state.
   CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
   if (sa != nullptr && tex != nullptr) {
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
       InternalName::make("p3d_Texture0"), tex);
     state = state->add_attrib(sa);
   }
-  // Apply the same global state as render_geom so the quad lands in the right
-  // render bin and has consistent depth/cull state.
   state = _net_state->compose(state);
 
   if (_fsq == nullptr) _fsq = build_fullscreen_quad();
@@ -648,6 +719,9 @@ composite_quad(CPT(RenderState) state, PT(Texture) tex) {
 // Required interface — CompileGeometry / RenderGeometry / ReleaseGeometry
 // ===========================================================================
 
+/**
+ * Compiles RmlUi vertex/index data into a cached Panda3D Geom.
+ */
 Rml::CompiledGeometryHandle RmlRenderInterface::
 CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
                 Rml::Span<const int> indices) {
@@ -656,6 +730,9 @@ CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
   return (Rml::CompiledGeometryHandle)cg;
 }
 
+/**
+ * Draws a previously compiled geometry with an optional texture.
+ */
 void RmlRenderInterface::
 RenderGeometry(Rml::CompiledGeometryHandle geometry,
                Rml::Vector2f translation,
@@ -677,6 +754,9 @@ RenderGeometry(Rml::CompiledGeometryHandle geometry,
   render_geom(cg->_geom, state, translation);
 }
 
+/**
+ * Frees a compiled geometry object.
+ */
 void RmlRenderInterface::
 ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
   delete (CompiledGeometry *)geometry;
@@ -686,23 +766,27 @@ ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
 // Required interface — LoadTexture / GenerateTexture / ReleaseTexture
 // ===========================================================================
 
+/**
+ * Loads a texture from disk via Panda's VFS/TexturePool.  Y-flips the RAM
+ * image so that UV (0,0) maps to the image's top-left (CSS convention).
+ */
 Rml::TextureHandle RmlRenderInterface::
 LoadTexture(Rml::Vector2i &texture_dimensions, const Rml::String &source) {
   LoaderOptions opts;
-  opts.set_auto_texture_scale(
-    Texture::get_textures_power_2() == ATS_none ? ATS_none : ATS_pad);
+  opts.set_auto_texture_scale(ATS_none);
 
   PT(Texture) tex = TexturePool::load_texture(
     Filename::from_os_specific(source), 0, false, opts);
-  if (!tex) { texture_dimensions = {0,0}; return 0; }
+  if (!tex) { texture_dimensions = {0, 0}; return 0; }
 
-  // Flip Y in RAM so UV (0,0) maps to image top-left (CSS convention).
+  // Flip Y in RAM so UV (0,0) maps to the image top-left (CSS convention).
   // make_geom passes tex_coords verbatim; this keeps image and shader
   // geometry on the same coordinate convention.
   if (tex->has_ram_image()) {
     int xsize = tex->get_x_size();
     int ysize = tex->get_y_size();
-    int row   = xsize * tex->get_num_components(); // bytes per row
+    // bytes per row: components * bytes per component
+    int row = xsize * tex->get_num_components() * tex->get_component_width();
     PTA_uchar img = tex->modify_ram_image();
     unsigned char *data = &img[0];
     for (int y = 0; y < ysize / 2; ++y) {
@@ -712,8 +796,8 @@ LoadTexture(Rml::Vector2i &texture_dimensions, const Rml::String &source) {
     }
   }
 
-  tex->set_minfilter(SamplerState::FT_linear);
-  tex->set_magfilter(SamplerState::FT_linear);
+  tex->set_minfilter(SamplerState::FT_nearest);
+  tex->set_magfilter(SamplerState::FT_nearest);
 
   int w = tex->get_orig_file_x_size();
   int h = tex->get_orig_file_y_size();
@@ -724,6 +808,9 @@ LoadTexture(Rml::Vector2i &texture_dimensions, const Rml::String &source) {
   return (Rml::TextureHandle)tex.p();
 }
 
+/**
+ * Creates a texture from raw RGBA data supplied by RmlUi (e.g. font atlases).
+ */
 Rml::TextureHandle RmlRenderInterface::
 GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dims) {
   PT(Texture) tex = new Texture;
@@ -739,8 +826,8 @@ GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dims) {
   // No Y-flip: make_geom passes tex_coords verbatim (CSS y-down convention).
   for (int y = 0; y < dims.y; ++y, src += src_stride, dst += dst_stride) {
     for (size_t i = 0; i < src_stride; i += 4) {
-      dst[i+0] = src[i+2]; dst[i+1] = src[i+1];
-      dst[i+2] = src[i+0]; dst[i+3] = src[i+3];
+      dst[i + 0] = src[i + 2]; dst[i + 1] = src[i + 1];
+      dst[i + 2] = src[i + 0]; dst[i + 3] = src[i + 3];
     }
   }
   tex->set_wrap_u(SamplerState::WM_clamp);
@@ -751,6 +838,9 @@ GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dims) {
   return (Rml::TextureHandle)tex.p();
 }
 
+/**
+ * Releases a texture created by LoadTexture or GenerateTexture.
+ */
 void RmlRenderInterface::
 ReleaseTexture(Rml::TextureHandle texture) {
   Texture *tex = (Texture *)texture;
@@ -758,28 +848,35 @@ ReleaseTexture(Rml::TextureHandle texture) {
 }
 
 // ===========================================================================
-// Required interface — EnableScissorRegion / SetScissorRegion
+// Required interface — EnableScissorRegion / SetScissorRegion / SetTransform
 // ===========================================================================
 
+/**
+ * Enables or disables scissor clipping for subsequent geometry.
+ */
 void RmlRenderInterface::
 EnableScissorRegion(bool enable) {
   _scissor_active = enable;
 }
 
+/**
+ * Sets the scissor rectangle (CSS pixel coords, y-down).
+ */
 void RmlRenderInterface::
 SetScissorRegion(Rml::Rectanglei region) {
   _scissor_rect = region;
 }
 
-// RmlUi calls SetTransform when a CSS transform: property is active.
-// nullptr means identity — reset to no extra transform.
-//
-// Matrix4f is ColumnMajorMatrix4f (RMLUI_MATRIX_ROW_MAJOR not defined).
-// data() returns elements column-by-column: d[0..3]=col0, d[4..7]=col1, …
-// Reading d[0],d[4],d[8],d[12] as Panda row 0 extracts the first element of
-// each column, which is equivalent to transposing the Rml matrix.  Panda then
-// re-transposes to column-major on upload, so the round-trip is identity —
-// the same matrix values reach GLSL as were in the Rml Matrix4f.
+/**
+ * Sets the CSS transform matrix for subsequent geometry, or nullptr to reset
+ * to identity.
+ *
+ * Rml::Matrix4f is column-major (RMLUI_MATRIX_ROW_MAJOR not defined).
+ * data() returns elements column-by-column: d[0..3]=col0, d[4..7]=col1, …
+ * Reading d[0],d[4],d[8],d[12] as Panda row 0 transposes the Rml matrix.
+ * Panda re-transposes on upload, so the round-trip is identity — the same
+ * matrix values reach GLSL as were in the Rml Matrix4f.
+ */
 void RmlRenderInterface::
 SetTransform(const Rml::Matrix4f *transform) {
   if (transform == nullptr) {
@@ -799,33 +896,46 @@ SetTransform(const Rml::Matrix4f *transform) {
 // Layer interface — PushLayer / CompositeLayers / PopLayer
 // ===========================================================================
 
+/**
+ * Allocates a new offscreen layer and binds it as the current render target.
+ */
 Rml::LayerHandle RmlRenderInterface::
 PushLayer() {
   LayerBuffer *lb = alloc_layer();
   if (!lb) return 0;
 
-  // Resize the layer buffer to match the window if needed.
+  // Resize the layer buffer (and scratch buffers) to match the window if needed.
   if (_window) {
     int w = _window->get_x_size();
     int h = _window->get_y_size();
-    if (lb->tex->get_x_size() != w || lb->tex->get_y_size() != h) {
-      lb->buf->set_size_and_recalc(w, h);
+    if (lb->_tex->get_x_size() != w || lb->_tex->get_y_size() != h) {
+      lb->_buf->set_size_and_recalc(w, h);
+    }
+    for (int si = 0; si < 2; ++si) {
+      if (_scratch[si] &&
+          (_scratch[si]->_tex->get_x_size() != w ||
+           _scratch[si]->_tex->get_y_size() != h)) {
+        _scratch[si]->_buf->set_size_and_recalc(w, h);
+      }
     }
   }
 
-  // Bind the layer's FBO and clear to transparent black.
   begin_layer(lb);
 
   Rml::LayerHandle handle = reinterpret_cast<Rml::LayerHandle>(lb) + 1;
 
   LayerEntry entry;
-  entry.handle  = handle;
-  entry.scissor = _scissor_rect;
+  entry._handle  = handle;
+  entry._scissor = _scissor_rect;
   _layer_stack.push_back(entry);
 
   return handle;
 }
 
+/**
+ * Composites the source layer onto the destination layer, running the filter
+ * chain in between.
+ */
 void RmlRenderInterface::
 CompositeLayers(Rml::LayerHandle source_handle,
                 Rml::LayerHandle destination_handle,
@@ -834,22 +944,24 @@ CompositeLayers(Rml::LayerHandle source_handle,
 
   LayerBuffer *src_lb  = get_layer(source_handle);
   LayerBuffer *dest_lb = get_layer(destination_handle);
-  if (src_lb == nullptr || !src_lb->frame_open) return;
+  if (src_lb == nullptr || !src_lb->_frame_open) return;
 
   // End the source layer's frame → texture is now ready.
   end_layer(src_lb, nullptr);
 
-  // Apply filter chain in ping-pong (ping-pong uses scratch buffers and always
-  // leaves the main window bound on exit).
-  PT(Texture) result = apply_filters(src_lb->tex, filters);
+  // Apply filter chain in ping-pong scratch buffers.
+  PT(Texture) result = apply_filters(src_lb->_tex, filters);
 
   // Rebind the destination FBO so the composite quad goes to the right target.
   if (dest_lb != nullptr) {
-    if (!dest_lb->frame_open) {
-      dest_lb->buf->begin_frame(GraphicsOutput::FM_render, _thread);
-      dest_lb->frame_open = true;
+    if (!dest_lb->_frame_open) {
+      if (!dest_lb->_buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
+        rmlui_cat.error() << "begin_frame failed on composite destination\n";
+        return;
+      }
+      dest_lb->_frame_open = true;
     }
-    DisplayRegionPipelineReader dr_reader(dest_lb->dr, _thread);
+    DisplayRegionPipelineReader dr_reader(dest_lb->_dr, _thread);
     _gsg->prepare_display_region(&dr_reader);
   }
   // else: main window is already active from end_layer(src_lb, nullptr) above.
@@ -858,7 +970,7 @@ CompositeLayers(Rml::LayerHandle source_handle,
   CPT(RenderState) state = _shader_passthrough;
   CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
   sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-    InternalName::make("u_blend_factor"), LVecBase4f(1.f));
+    InternalName::make("u_blend_factor"), LVecBase4f(1.f, 0.f, 0.f, 0.f));
   state = state->add_attrib(sa);
 
   if (blend_mode == Rml::BlendMode::Replace) {
@@ -870,25 +982,30 @@ CompositeLayers(Rml::LayerHandle source_handle,
   composite_quad(state, result);
 }
 
+/**
+ * Pops the current layer, ending its frame and freeing it back to the pool.
+ * Restores the scissor rect that was active before the matching PushLayer.
+ */
 void RmlRenderInterface::
 PopLayer() {
   if (_layer_stack.size() <= 1) return;
   LayerEntry top = _layer_stack.back();
   _layer_stack.pop_back();
 
-  // Restore scissor to the state before PushLayer.
-  _scissor_rect = top.scissor;
+  // Restore scissor to the state saved at PushLayer time.
+  _scissor_rect = top._scissor;
 
-  if (top.handle == 0) return;
-  LayerBuffer *lb = get_layer(top.handle);
+  if (top._handle == 0) return;
+  LayerBuffer *lb = get_layer(top._handle);
   if (!lb) return;
 
-  // End this layer's frame if still open (shouldn't happen — CompositeLayers
-  // should have already ended it, but guard against partial rendering).
-  if (lb->frame_open) {
-    LayerBuffer *parent = (_layer_stack.empty() || _layer_stack.back().handle == 0)
+  // End this layer's frame if still open.  CompositeLayers should have
+  // already done this, but guard against partially-rendered frames.
+  if (lb->_frame_open) {
+    LayerBuffer *parent = (_layer_stack.empty() ||
+                           _layer_stack.back()._handle == 0)
                           ? nullptr
-                          : get_layer(_layer_stack.back().handle);
+                          : get_layer(_layer_stack.back()._handle);
     end_layer(lb, parent);
   }
   free_layer(lb);
@@ -898,22 +1015,26 @@ PopLayer() {
 // SaveLayerAsTexture / SaveLayerAsMaskImage
 // ===========================================================================
 
+/**
+ * Snapshots the current layer's contents into a new texture handle that the
+ * caller owns.  The layer remains active for further rendering.
+ */
 Rml::TextureHandle RmlRenderInterface::
 SaveLayerAsTexture() {
   if (_layer_stack.empty()) return 0;
   const LayerEntry &top = _layer_stack.back();
-  if (top.handle == 0) return 0;
+  if (top._handle == 0) return 0;
 
-  LayerBuffer *lb = get_layer(top.handle);
-  if (!lb || !lb->tex) return 0;
+  LayerBuffer *lb = get_layer(top._handle);
+  if (!lb || !lb->_tex) return 0;
 
   // Flush the current layer so its texture is up-to-date.
-  if (lb->frame_open) {
-    lb->buf->end_frame(GraphicsOutput::FM_render, _thread);
-    lb->frame_open = false;
+  if (lb->_frame_open) {
+    lb->_buf->end_frame(GraphicsOutput::FM_render, _thread);
+    lb->_frame_open = false;
   }
 
-  // Blit lb's texture into a scratch snapshot buffer.
+  // Blit lb's texture into a snapshot buffer.
   LayerBuffer *snap_lb = alloc_layer();
   if (!snap_lb) return 0;
 
@@ -921,43 +1042,48 @@ SaveLayerAsTexture() {
   CPT(RenderState) st = _shader_passthrough;
   CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
   sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-    InternalName::make("u_blend_factor"), LVecBase4f(1.f));
+    InternalName::make("u_blend_factor"), LVecBase4f(1.f, 0.f, 0.f, 0.f));
   st = st->add_attrib(sa);
-  composite_quad(st, lb->tex);
+  composite_quad(st, lb->_tex);
   end_layer(snap_lb, nullptr);
+
+  // Keep a strong reference to the texture before returning the buffer.
+  // ReleaseTexture will drop this ref.
+  PT(Texture) snap_tex = snap_lb->_tex;
+  snap_tex->ref();
+
+  // Return snap_lb to the pool now; the PT above keeps the texture alive.
+  free_layer(snap_lb);
 
   // Restart lb so the caller can keep rendering into it.
   begin_layer(lb);
 
-  // Return snap_lb to the pool; the tex ref keeps the GPU texture alive
-  // independently of the LayerBuffer.  ReleaseTexture will drop the ref.
-  snap_lb->tex->ref();
-  free_layer(snap_lb);
-
-  return (Rml::TextureHandle)snap_lb->tex.p();
+  return (Rml::TextureHandle)snap_tex.p();
 }
 
+/**
+ * Snapshots the current layer as a mask-image filter handle.
+ */
 Rml::CompiledFilterHandle RmlRenderInterface::
 SaveLayerAsMaskImage() {
   if (_layer_stack.empty()) return 0;
   const LayerEntry &top = _layer_stack.back();
-  if (top.handle == 0) return 0;
+  if (top._handle == 0) return 0;
 
-  LayerBuffer *lb = get_layer(top.handle);
-  if (!lb || !lb->tex) return 0;
+  LayerBuffer *lb = get_layer(top._handle);
+  if (!lb || !lb->_tex) return 0;
 
-  // Flush the current layer to its texture.
-  if (lb->frame_open) {
+  if (lb->_frame_open) {
     LayerBuffer *parent = (_layer_stack.size() >= 2 &&
-                           _layer_stack[_layer_stack.size()-2].handle != 0)
-      ? get_layer(_layer_stack[_layer_stack.size()-2].handle) : nullptr;
+                           _layer_stack[_layer_stack.size() - 2]._handle != 0)
+      ? get_layer(_layer_stack[_layer_stack.size() - 2]._handle) : nullptr;
     end_layer(lb, parent);
     begin_layer(lb); // restart for future rendering
   }
 
   CompiledFilterData *fd = new CompiledFilterData;
-  fd->type     = FilterType::MaskImage;
-  fd->mask_tex = lb->tex;
+  fd->_type     = FilterType::MASK_IMAGE;
+  fd->_mask_tex = lb->_tex;
   return reinterpret_cast<Rml::CompiledFilterHandle>(fd);
 }
 
@@ -965,6 +1091,10 @@ SaveLayerAsMaskImage() {
 // apply_filters — ping-pong filter chain
 // ===========================================================================
 
+/**
+ * Applies the filter chain to src using ping-pong scratch buffers.
+ * Returns the texture holding the final result (may be src if no filters).
+ */
 PT(Texture) RmlRenderInterface::
 apply_filters(PT(Texture) src,
               Rml::Span<const Rml::CompiledFilterHandle> filters) {
@@ -977,17 +1107,16 @@ apply_filters(PT(Texture) src,
   float inv_h = h > 0 ? 1.f / (float)h : 1.f;
 
   PT(Texture) ping = src;
-  int scratch_idx = 0; // alternates between _scratch[0] and _scratch[1]
+  int scratch_idx = 0;
 
-  // Helper: blit ping through a shader state into the next scratch buffer.
-  // Updates ping to be the scratch buffer's texture.
+  // Blit ping through a shader state into the next scratch buffer.
   auto blit = [&](CPT(RenderState) state) {
     LayerBuffer *dest = _scratch[scratch_idx ^ 1];
     if (dest) {
       begin_layer(dest);
       composite_quad(state, ping);
       end_layer(dest, nullptr);
-      ping = dest->tex;
+      ping = dest->_tex;
     }
     scratch_idx ^= 1;
   };
@@ -996,21 +1125,21 @@ apply_filters(PT(Texture) src,
     if (!fh) continue;
     const CompiledFilterData &fd = *reinterpret_cast<const CompiledFilterData *>(fh);
 
-    switch (fd.type) {
+    switch (fd._type) {
 
-    case FilterType::Passthrough: {
+    case FilterType::PASSTHROUGH: {
       CPT(RenderState) st = _shader_passthrough;
       CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
       sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-        InternalName::make("u_blend_factor"), LVecBase4f(fd.blend_factor));
+        InternalName::make("u_blend_factor"), LVecBase4f(fd._blend_factor, 0.f, 0.f, 0.f));
       blit(st->add_attrib(sa));
       break;
     }
 
-    case FilterType::ColorMatrix: {
+    case FilterType::COLOR_MATRIX: {
       CPT(RenderState) st = _shader_color_matrix;
       PTA_LMatrix4f mat;
-      mat.push_back(UnalignedLMatrix4f(fd.color_matrix));
+      mat.push_back(UnalignedLMatrix4f(fd._color_matrix));
       CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
       sa = DCAST(ShaderAttrib, sa)->set_shader_input(
         InternalName::make("u_color_matrix"), mat);
@@ -1018,8 +1147,8 @@ apply_filters(PT(Texture) src,
       break;
     }
 
-    case FilterType::Blur: {
-      float sigma = std::max(fd.sigma, 0.1f);
+    case FilterType::BLUR: {
+      float sigma = std::max(fd._sigma, 0.1f);
       float wf[BLUR_WEIGHTS];
       compute_blur_weights(sigma, wf);
       PTA_float weights;
@@ -1040,11 +1169,11 @@ apply_filters(PT(Texture) src,
       break;
     }
 
-    case FilterType::DropShadow: {
-      // Blur pass (if sigma >= 0.5).
-      if (fd.sigma >= 0.5f) {
+    case FilterType::DROP_SHADOW: {
+      // Gaussian blur pass (if sigma is large enough to matter).
+      if (fd._sigma >= 0.5f) {
         float wf2[BLUR_WEIGHTS];
-        compute_blur_weights(fd.sigma, wf2);
+        compute_blur_weights(fd._sigma, wf2);
         PTA_float weights;
         for (int i = 0; i < BLUR_WEIGHTS; ++i) weights.push_back(wf2[i]);
         auto blur_pass2 = [&](LVecBase2f axis) {
@@ -1064,24 +1193,24 @@ apply_filters(PT(Texture) src,
       {
         CPT(RenderState) st = _shader_drop_shadow;
         CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_shadow_color"), fd.color);
-        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_offset"),       fd.offset);
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_shadow_color"), fd._color);
+        sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_offset"),       fd._offset);
         sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_inv_size"),     LVecBase2f(inv_w, inv_h));
         blit(st->add_attrib(sa));
       }
       break;
     }
 
-    case FilterType::MaskImage: {
-      if (!fd.mask_tex) break;
+    case FilterType::MASK_IMAGE: {
+      if (!fd._mask_tex) break;
       CPT(RenderState) st = _shader_blend_mask;
       CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
-      sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_mask_tex"), fd.mask_tex);
+      sa = DCAST(ShaderAttrib, sa)->set_shader_input(InternalName::make("u_mask_tex"), fd._mask_tex);
       blit(st->add_attrib(sa));
       break;
     }
 
-    case FilterType::Invalid:
+    case FilterType::INVALID:
     default: break;
     }
   }
@@ -1092,82 +1221,85 @@ apply_filters(PT(Texture) src,
 // CompileFilter / ReleaseFilter
 // ===========================================================================
 
+/**
+ * Compiles an RmlUi CSS filter into a filter data struct.
+ */
 Rml::CompiledFilterHandle RmlRenderInterface::
 CompileFilter(const Rml::String &name, const Rml::Dictionary &parameters) {
   CompiledFilterData *fd = new CompiledFilterData;
 
   if (name == "opacity") {
-    fd->type = FilterType::Passthrough;
-    fd->blend_factor = Rml::Get(parameters, "value", 1.f);
+    fd->_type = FilterType::PASSTHROUGH;
+    fd->_blend_factor = Rml::Get(parameters, "value", 1.f);
   }
   else if (name == "blur") {
-    fd->type  = FilterType::Blur;
-    fd->sigma = Rml::Get(parameters, "sigma", 1.f);
+    fd->_type  = FilterType::BLUR;
+    fd->_sigma = Rml::Get(parameters, "sigma", 1.f);
   }
   else if (name == "drop-shadow") {
-    fd->type  = FilterType::DropShadow;
-    fd->sigma = Rml::Get(parameters, "sigma", 0.f);
+    fd->_type  = FilterType::DROP_SHADOW;
+    fd->_sigma = Rml::Get(parameters, "sigma", 0.f);
     // Premultiply alpha to match the premultiplied-alpha render pipeline.
     Rml::Colourb c = Rml::Get(parameters, "color", Rml::Colourb());
     float a = c.alpha / 255.f;
-    fd->color = LColor(c.red/255.f * a, c.green/255.f * a, c.blue/255.f * a, a);
+    fd->_color = LColor(c.red/255.f * a, c.green/255.f * a, c.blue/255.f * a, a);
     Rml::Vector2f off = Rml::Get(parameters, "offset", Rml::Vector2f(0.f));
-    fd->offset = LVecBase2f(off.x, off.y);
+    fd->_offset = LVecBase2f(off.x, off.y);
   }
   else if (name == "brightness") {
-    fd->type = FilterType::ColorMatrix;
+    fd->_type = FilterType::COLOR_MATRIX;
     float v = Rml::Get(parameters, "value", 1.f);
-    fd->color_matrix = LMatrix4f(v,0,0,0, 0,v,0,0, 0,0,v,0, 0,0,0,1);
+    fd->_color_matrix = LMatrix4f(v, 0, 0, 0, 0, v, 0, 0, 0, 0, v, 0, 0, 0, 0, 1);
   }
   else if (name == "contrast") {
-    fd->type = FilterType::ColorMatrix;
+    fd->_type = FilterType::COLOR_MATRIX;
     float v = Rml::Get(parameters, "value", 1.f);
-    float g = 0.5f - 0.5f*v;
-    fd->color_matrix = LMatrix4f(v,0,0,0, 0,v,0,0, 0,0,v,0, g,g,g,1);
+    float g = 0.5f - 0.5f * v;
+    fd->_color_matrix = LMatrix4f(v, 0, 0, 0, 0, v, 0, 0, 0, 0, v, 0, g, g, g, 1);
   }
   else if (name == "invert") {
-    fd->type = FilterType::ColorMatrix;
+    fd->_type = FilterType::COLOR_MATRIX;
     float v = std::min(std::max(Rml::Get(parameters, "value", 1.f), 0.f), 1.f);
-    float i = 1.f - 2.f*v;
-    fd->color_matrix = LMatrix4f(i,0,0,0, 0,i,0,0, 0,0,i,0, v,v,v,1);
+    float i = 1.f - 2.f * v;
+    fd->_color_matrix = LMatrix4f(i, 0, 0, 0, 0, i, 0, 0, 0, 0, i, 0, v, v, v, 1);
   }
   else if (name == "grayscale") {
-    fd->type = FilterType::ColorMatrix;
+    fd->_type = FilterType::COLOR_MATRIX;
     float v = Rml::Get(parameters, "value", 1.f), rv = 1.f - v;
-    float r = v*0.2126f, g = v*0.7152f, b = v*0.0722f;
-    fd->color_matrix = LMatrix4f(
-      r+rv,g,   b,   0,
-      r,   g+rv,b,   0,
-      r,   g,   b+rv,0,
-      0,   0,   0,   1);
+    float r = v * 0.2126f, g = v * 0.7152f, b = v * 0.0722f;
+    fd->_color_matrix = LMatrix4f(
+      r + rv, g,      b,      0,
+      r,      g + rv, b,      0,
+      r,      g,      b + rv, 0,
+      0,      0,      0,      1);
   }
   else if (name == "sepia") {
-    fd->type = FilterType::ColorMatrix;
+    fd->_type = FilterType::COLOR_MATRIX;
     float v = Rml::Get(parameters, "value", 1.f), rv = 1.f - v;
-    fd->color_matrix = LMatrix4f(
-      v*0.393f+rv, v*0.769f,       v*0.189f,       0,
-      v*0.349f,    v*0.686f+rv,    v*0.168f,       0,
-      v*0.272f,    v*0.534f,       v*0.131f+rv,    0,
-      0,           0,              0,              1);
+    fd->_color_matrix = LMatrix4f(
+      v * 0.393f + rv, v * 0.769f,       v * 0.189f,       0,
+      v * 0.349f,      v * 0.686f + rv,  v * 0.168f,       0,
+      v * 0.272f,      v * 0.534f,       v * 0.131f + rv,  0,
+      0,               0,                0,                 1);
   }
   else if (name == "hue-rotate") {
-    fd->type = FilterType::ColorMatrix;
+    fd->_type = FilterType::COLOR_MATRIX;
     float a = Rml::Get(parameters, "value", 0.f);
     float s = sinf(a), c = cosf(a);
-    fd->color_matrix = LMatrix4f(
-      0.213f+0.787f*c-0.213f*s, 0.715f-0.715f*c-0.715f*s, 0.072f-0.072f*c+0.928f*s, 0,
-      0.213f-0.213f*c+0.143f*s, 0.715f+0.285f*c+0.140f*s, 0.072f-0.072f*c-0.283f*s, 0,
-      0.213f-0.213f*c-0.787f*s, 0.715f-0.715f*c+0.715f*s, 0.072f+0.928f*c+0.072f*s, 0,
-      0,                         0,                         0,                         1);
+    fd->_color_matrix = LMatrix4f(
+      0.213f + 0.787f*c - 0.213f*s, 0.715f - 0.715f*c - 0.715f*s, 0.072f - 0.072f*c + 0.928f*s, 0,
+      0.213f - 0.213f*c + 0.143f*s, 0.715f + 0.285f*c + 0.140f*s, 0.072f - 0.072f*c - 0.283f*s, 0,
+      0.213f - 0.213f*c - 0.787f*s, 0.715f - 0.715f*c + 0.715f*s, 0.072f + 0.928f*c + 0.072f*s, 0,
+      0,                             0,                             0,                             1);
   }
   else if (name == "saturate") {
-    fd->type = FilterType::ColorMatrix;
+    fd->_type = FilterType::COLOR_MATRIX;
     float v = Rml::Get(parameters, "value", 1.f);
-    fd->color_matrix = LMatrix4f(
-      0.213f+0.787f*v, 0.715f-0.715f*v, 0.072f-0.072f*v, 0,
-      0.213f-0.213f*v, 0.715f+0.285f*v, 0.072f-0.072f*v, 0,
-      0.213f-0.213f*v, 0.715f-0.715f*v, 0.072f+0.928f*v, 0,
-      0,               0,               0,               1);
+    fd->_color_matrix = LMatrix4f(
+      0.213f + 0.787f*v, 0.715f - 0.715f*v, 0.072f - 0.072f*v, 0,
+      0.213f - 0.213f*v, 0.715f + 0.285f*v, 0.072f - 0.072f*v, 0,
+      0.213f - 0.213f*v, 0.715f - 0.715f*v, 0.072f + 0.928f*v, 0,
+      0,                 0,                 0,                 1);
   }
   else {
     delete fd;
@@ -1177,6 +1309,9 @@ CompileFilter(const Rml::String &name, const Rml::Dictionary &parameters) {
   return reinterpret_cast<Rml::CompiledFilterHandle>(fd);
 }
 
+/**
+ * Frees a compiled filter.
+ */
 void RmlRenderInterface::
 ReleaseFilter(Rml::CompiledFilterHandle filter) {
   delete reinterpret_cast<CompiledFilterData *>(filter);
@@ -1186,6 +1321,9 @@ ReleaseFilter(Rml::CompiledFilterHandle filter) {
 // CompileShader / RenderShader / ReleaseShader
 // ===========================================================================
 
+/**
+ * Compiles an RmlUi decorator shader (gradients, procedural creation shader).
+ */
 Rml::CompiledShaderHandle RmlRenderInterface::
 CompileShader(const Rml::String &name, const Rml::Dictionary &parameters) {
   CompiledShaderData *sd = new CompiledShaderData;
@@ -1197,51 +1335,51 @@ CompileShader(const Rml::String &name, const Rml::Dictionary &parameters) {
     const Rml::ColorStopList &stops =
       it->second.GetReference<Rml::ColorStopList>();
     int n = std::min((int)stops.size(), MAX_STOPS);
-    sd->num_stops = n;
+    sd->_num_stops = n;
     for (int i = 0; i < n; ++i) {
-      sd->stop_positions[i] = stops[i].position.number;
+      sd->_stop_positions[i] = stops[i].position.number;
       const auto &c = stops[i].color;
-      sd->stop_colors[i] = LVecBase4f(
+      sd->_stop_colors[i] = LVecBase4f(
         c.red/255.f, c.green/255.f, c.blue/255.f, c.alpha/255.f);
     }
   };
 
   if (name == "linear-gradient") {
-    sd->type = ShaderType::Gradient;
+    sd->_type = ShaderType::GRADIENT;
     bool rep = Rml::Get(parameters, "repeating", false);
-    sd->gradient_func = rep ? GradientFunc::RepeatingLinear : GradientFunc::Linear;
+    sd->_gradient_func = rep ? GradientFunc::REPEATING_LINEAR : GradientFunc::LINEAR;
     Rml::Vector2f p0 = Rml::Get(parameters, "p0", Rml::Vector2f(0.f));
     Rml::Vector2f p1 = Rml::Get(parameters, "p1", Rml::Vector2f(0.f));
-    sd->p = LVecBase2f(p0.x, p0.y);
-    sd->v = LVecBase2f(p1.x - p0.x, p1.y - p0.y);
+    sd->_p = LVecBase2f(p0.x, p0.y);
+    sd->_v = LVecBase2f(p1.x - p0.x, p1.y - p0.y);
     load_stops(parameters);
   }
   else if (name == "radial-gradient") {
-    sd->type = ShaderType::Gradient;
+    sd->_type = ShaderType::GRADIENT;
     bool rep = Rml::Get(parameters, "repeating", false);
-    sd->gradient_func = rep ? GradientFunc::RepeatingRadial : GradientFunc::Radial;
+    sd->_gradient_func = rep ? GradientFunc::REPEATING_RADIAL : GradientFunc::RADIAL;
     Rml::Vector2f c  = Rml::Get(parameters, "center", Rml::Vector2f(0.f));
     Rml::Vector2f r  = Rml::Get(parameters, "radius", Rml::Vector2f(1.f));
-    sd->p = LVecBase2f(c.x, c.y);
-    sd->v = LVecBase2f(1.f/r.x, 1.f/r.y);
+    sd->_p = LVecBase2f(c.x, c.y);
+    sd->_v = LVecBase2f(1.f / r.x, 1.f / r.y);
     load_stops(parameters);
   }
   else if (name == "conic-gradient") {
-    sd->type = ShaderType::Gradient;
+    sd->_type = ShaderType::GRADIENT;
     bool rep = Rml::Get(parameters, "repeating", false);
-    sd->gradient_func = rep ? GradientFunc::RepeatingConic : GradientFunc::Conic;
+    sd->_gradient_func = rep ? GradientFunc::REPEATING_CONIC : GradientFunc::CONIC;
     Rml::Vector2f c = Rml::Get(parameters, "center", Rml::Vector2f(0.f));
     float angle     = Rml::Get(parameters, "angle", 0.f);
-    sd->p = LVecBase2f(c.x, c.y);
-    sd->v = LVecBase2f(cosf(angle), sinf(angle));
+    sd->_p = LVecBase2f(c.x, c.y);
+    sd->_v = LVecBase2f(cosf(angle), sinf(angle));
     load_stops(parameters);
   }
   else if (name == "shader") {
     Rml::String val = Rml::Get(parameters, "value", Rml::String());
     if (val == "creation") {
-      sd->type = ShaderType::Creation;
+      sd->_type = ShaderType::CREATION;
       Rml::Vector2f dim = Rml::Get(parameters, "dimensions", Rml::Vector2f(1.f));
-      sd->dimensions = LVecBase2f(dim.x, dim.y);
+      sd->_dimensions = LVecBase2f(dim.x, dim.y);
     } else {
       delete sd;
       rmlui_cat.warning() << "Unknown shader value '" << val << "'\n";
@@ -1256,6 +1394,9 @@ CompileShader(const Rml::String &name, const Rml::Dictionary &parameters) {
   return reinterpret_cast<Rml::CompiledShaderHandle>(sd);
 }
 
+/**
+ * Renders a compiled shader over the given geometry.
+ */
 void RmlRenderInterface::
 RenderShader(Rml::CompiledShaderHandle shader_handle,
              Rml::CompiledGeometryHandle geometry_handle,
@@ -1271,23 +1412,26 @@ RenderShader(Rml::CompiledShaderHandle shader_handle,
 
   CPT(RenderState) state;
 
-  switch (sd.type) {
-  case ShaderType::Gradient: {
+  switch (sd._type) {
+  case ShaderType::GRADIENT: {
     state = _shader_gradient;
     CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
+    // u_func and u_num_stops are declared as int in the shader; passing as
+    // a 4-component float vector lets Panda's shader system handle the
+    // int/float cast on upload.
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_func"), LVecBase4f((float)sd.gradient_func, 0, 0, 0));
+      InternalName::make("u_func"), LVecBase4f((float)sd._gradient_func, 0, 0, 0));
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_p"), sd.p);
+      InternalName::make("u_p"), sd._p);
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_v"), sd.v);
+      InternalName::make("u_v"), sd._v);
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_num_stops"), LVecBase4f((float)sd.num_stops, 0, 0, 0));
+      InternalName::make("u_num_stops"), LVecBase4f((float)sd._num_stops, 0, 0, 0));
     PTA_LVecBase4f colors;
     PTA_float positions;
-    for (int i = 0; i < sd.num_stops; ++i) {
-      colors.push_back(sd.stop_colors[i]);
-      positions.push_back(sd.stop_positions[i]);
+    for (int i = 0; i < sd._num_stops; ++i) {
+      colors.push_back(sd._stop_colors[i]);
+      positions.push_back(sd._stop_positions[i]);
     }
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
       InternalName::make("u_stop_colors"), colors);
@@ -1296,14 +1440,19 @@ RenderShader(Rml::CompiledShaderHandle shader_handle,
     state = state->add_attrib(sa);
     break;
   }
-  case ShaderType::Creation: {
+  case ShaderType::CREATION: {
+    if (_shader_creation == nullptr) {
+      PT(Shader) sh = Shader::make(Shader::SL_GLSL, s_vert_ui, s_frag_creation);
+      // Reuse the same blend-over base state as _shader_gradient.
+      _shader_creation = _shader_gradient->add_attrib(ShaderAttrib::make(sh));
+    }
     state = _shader_creation;
     CPT(RenderAttrib) sa = state->get_attrib(ShaderAttrib::get_class_slot());
     float t = (float)Rml::GetSystemInterface()->GetElapsedTime();
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
       InternalName::make("u_time"), LVecBase4f(t, 0, 0, 0));
     sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-      InternalName::make("u_dimensions"), sd.dimensions);
+      InternalName::make("u_dimensions"), sd._dimensions);
     state = state->add_attrib(sa);
     break;
   }
@@ -1313,6 +1462,9 @@ RenderShader(Rml::CompiledShaderHandle shader_handle,
   render_geom(cg->_geom, state, translation);
 }
 
+/**
+ * Frees a compiled shader.
+ */
 void RmlRenderInterface::
 ReleaseShader(Rml::CompiledShaderHandle shader_handle) {
   delete reinterpret_cast<CompiledShaderData *>(shader_handle);

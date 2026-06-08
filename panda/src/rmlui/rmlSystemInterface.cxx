@@ -13,12 +13,30 @@
 
 #include "rmlSystemInterface.h"
 #include "clockObject.h"
+#include "throw_event.h"
 
+/**
+ * Returns the elapsed real time in seconds via Panda's global clock.
+ */
 double RmlSystemInterface::
 GetElapsedTime() {
   return ClockObject::get_global_clock()->get_real_time();
 }
 
+/**
+ * Fires "rmlui-cursor" on the Panda Messenger with the cursor name as a string
+ * parameter, allowing Python to react without polling.  An empty name (reset)
+ * is normalised to "default".
+ */
+void RmlSystemInterface::
+SetMouseCursor(const Rml::String &cursor_name) {
+  const std::string name = cursor_name.empty() ? "default" : cursor_name;
+  throw_event("rmlui-cursor", EventParameter(name));
+}
+
+/**
+ * Redirects an RmlUi log message to the appropriate Panda3D notify category.
+ */
 bool RmlSystemInterface::
 LogMessage(Rml::Log::Type type, const Rml::String &message) {
   switch (type) {
