@@ -13,6 +13,7 @@
 
 #include "rmlContext.h"
 #include "rmlDocument.h"
+#include "rmlElement.h"
 #include "rmlDataModel.h"
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Context.h>
@@ -24,6 +25,7 @@
  */
 PT(RmlDocument) RmlContext::
 load_document(const std::string &path) {
+  nassertr(_ctx != nullptr, nullptr);
   Rml::ElementDocument *doc = _ctx->LoadDocument(path);
   if (doc == nullptr) {
     return nullptr;
@@ -37,6 +39,7 @@ load_document(const std::string &path) {
  */
 bool RmlContext::
 load_font_face(const std::string &path, bool fallback) {
+  nassertr(_ctx != nullptr, false);
   return Rml::LoadFontFace(path, fallback);
 }
 
@@ -47,15 +50,20 @@ load_font_face(const std::string &path, bool fallback) {
  */
 void RmlContext::
 update() {
+  nassertv(_ctx != nullptr);
   _ctx->Update();
 }
 
 /**
- * Renders the RmlUi context.  This is called automatically by RmlRegion;
- * only call manually when not using RmlRegion.
+ * Renders the RmlUi context.  Only call this manually when not using
+ * RmlRegion and you have set up a custom Rml::RenderInterface that does
+ * not require an active CullTraverser.  Calling this while a RmlRegion
+ * owns the context will crash because the render interface expects a live
+ * CullTraverser (set during RmlRegion::do_cull).
  */
 void RmlContext::
 render() {
+  nassertv(_ctx != nullptr);
   _ctx->Render();
 }
 
@@ -64,6 +72,7 @@ render() {
  */
 int RmlContext::
 get_width() const {
+  nassertr(_ctx != nullptr, 0);
   return _ctx->GetDimensions().x;
 }
 
@@ -72,6 +81,7 @@ get_width() const {
  */
 int RmlContext::
 get_height() const {
+  nassertr(_ctx != nullptr, 0);
   return _ctx->GetDimensions().y;
 }
 
@@ -80,6 +90,7 @@ get_height() const {
  */
 std::string RmlContext::
 get_name() const {
+  nassertr(_ctx != nullptr, std::string());
   return _ctx->GetName();
 }
 
@@ -92,6 +103,7 @@ get_name() const {
  */
 PT(RmlDataModel) RmlContext::
 create_data_model(const std::string &name) {
+  nassertr(_ctx != nullptr, nullptr);
   Rml::DataModelConstructor constructor = _ctx->CreateDataModel(name);
   if (!constructor) {
     return nullptr;
@@ -107,6 +119,7 @@ create_data_model(const std::string &name) {
  */
 PT(RmlDataModel) RmlContext::
 get_data_model(const std::string &name) {
+  nassertr(_ctx != nullptr, nullptr);
   Rml::DataModelConstructor constructor = _ctx->GetDataModel(name);
   if (!constructor) {
     return nullptr;
@@ -124,5 +137,109 @@ get_data_model(const std::string &name) {
  */
 bool RmlContext::
 remove_data_model(const std::string &name) {
+  nassertr(_ctx != nullptr, false);
   return _ctx->RemoveDataModel(name);
+}
+
+/**
+ * Returns true if the mouse cursor is currently over or interacting with any
+ * element in this context.  Use to suppress game input while the UI is active.
+ */
+bool RmlContext::
+is_mouse_interacting() const {
+  nassertr(_ctx != nullptr, false);
+  return _ctx->IsMouseInteracting();
+}
+
+/**
+ * Returns the topmost element under the given screen-space point, or nullptr.
+ * NOTE: The returned wrapper is non-owning.  Do not store it across a
+ * ctx.update() call that may unload documents.
+ */
+PT(RmlElement) RmlContext::
+get_element_at_point(float x, float y) const {
+  nassertr(_ctx != nullptr, nullptr);
+  Rml::Element *el = _ctx->GetElementAtPoint({x, y});
+  return el ? new RmlElement(el) : nullptr;
+}
+
+/**
+ * Returns the element currently under the mouse cursor, or nullptr.
+ * NOTE: The returned wrapper is non-owning.  Do not store it across a
+ * ctx.update() call that may unload documents.
+ */
+PT(RmlElement) RmlContext::
+get_hover_element() const {
+  nassertr(_ctx != nullptr, nullptr);
+  Rml::Element *el = _ctx->GetHoverElement();
+  return el ? new RmlElement(el) : nullptr;
+}
+
+/**
+ * Returns the element that currently holds keyboard focus, or nullptr.
+ * NOTE: The returned wrapper is non-owning.  Do not store it across a
+ * ctx.update() call that may unload documents.
+ */
+PT(RmlElement) RmlContext::
+get_focus_element() const {
+  nassertr(_ctx != nullptr, nullptr);
+  Rml::Element *el = _ctx->GetFocusElement();
+  return el ? new RmlElement(el) : nullptr;
+}
+
+/**
+ * Loads an RML document from an in-memory string.  source_url is used for
+ * error reporting only; defaults to "[from memory]" if empty.
+ */
+PT(RmlDocument) RmlContext::
+load_document_from_memory(const std::string &rml, const std::string &source_url) {
+  nassertr(_ctx != nullptr, nullptr);
+  Rml::ElementDocument *doc = _ctx->LoadDocumentFromMemory(
+      rml, source_url.empty() ? "[from memory]" : source_url);
+  return doc ? new RmlDocument(doc) : nullptr;
+}
+
+/**
+ * Unloads a single document from this context.
+ */
+void RmlContext::
+unload_document(RmlDocument *doc) {
+  nassertv(_ctx != nullptr && doc != nullptr);
+  _ctx->UnloadDocument(doc->get_raw());
+}
+
+/**
+ * Unloads all documents from this context.
+ */
+void RmlContext::
+unload_all_documents() {
+  nassertv(_ctx != nullptr);
+  _ctx->UnloadAllDocuments();
+}
+
+/**
+ * Returns the number of documents currently loaded in this context.
+ */
+int RmlContext::
+get_num_documents() const {
+  nassertr(_ctx != nullptr, 0);
+  return _ctx->GetNumDocuments();
+}
+
+/**
+ * Sets the density-independent pixel ratio for HiDPI scaling.
+ */
+void RmlContext::
+set_density_independent_pixel_ratio(float ratio) {
+  nassertv(_ctx != nullptr);
+  _ctx->SetDensityIndependentPixelRatio(ratio);
+}
+
+/**
+ * Enables or disables the built-in RmlUi software mouse cursor.
+ */
+void RmlContext::
+enable_mouse_cursor(bool enable) {
+  nassertv(_ctx != nullptr);
+  _ctx->EnableMouseCursor(enable);
 }

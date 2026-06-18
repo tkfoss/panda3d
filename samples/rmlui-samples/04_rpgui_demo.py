@@ -14,6 +14,7 @@ Shows:
   • Animated HP / Mana / Stamina progress bars
   • Range sliders with live readout
   • Character stats panel updated each frame
+  • Draggable panel (CSS drag: drag + dragstart/drag events + get_absolute_offset)
 
 Controls
 --------
@@ -57,19 +58,21 @@ class RpguiDemo(ShowBase):
         self.mouseWatcher.attachNewNode(self.input_handler)
 
         self.rml = RmlRegion.make("rpgui", self.win)
-        self.rml.setInputHandler(self.input_handler)
+        self.rml.set_input_handler(self.input_handler)
 
-        ctx = self.rml.getContext()
+        ctx = self.rml.get_context()
         for ttf in ("LatoLatin-Regular.ttf", "LatoLatin-Bold.ttf",
                     "LatoLatin-Italic.ttf", "LatoLatin-BoldItalic.ttf",
                     "PressStart2P-Regular.ttf"):
-            ctx.loadFontFace(os.path.join(ASSETS, ttf))
+            ctx.load_font_face(os.path.join(ASSETS, ttf))
 
-        self._doc = ctx.loadDocument(os.path.join(ASSETS, "rpgui_demo.rml"))
+        self._doc = ctx.load_document(os.path.join(ASSETS, "rpgui_demo.rml"))
         if not self._doc:
             raise RuntimeError("rpgui_demo.rml not found")
         self._doc.show()
-        self.rml.initDebugger()
+        self.rml.init_debugger()
+
+        self._drag_offset = (0.0, 0.0)
 
         self._setup_cursor()
         self._wire_events()
@@ -80,7 +83,7 @@ class RpguiDemo(ShowBase):
 
         self.accept("escape", self.userExit)
         def _toggle_dbg():
-            self.rml.setDebuggerVisible(not self.rml.isDebuggerVisible())
+            self.rml.set_debugger_visible(not self.rml.is_debugger_visible())
         self.accept("f1", _toggle_dbg)
         self.accept("`",  _toggle_dbg)
 
@@ -120,8 +123,6 @@ class RpguiDemo(ShowBase):
         self._cursor_np.setDepthTest(False)
         self._set_cursor("default")
 
-        self.accept("rmlui-cursor", self._set_cursor)
-
     def _set_cursor(self, name):
         key = name if name in self._cursor_textures else "default"
         tex = self._cursor_textures.get(key)
@@ -140,56 +141,76 @@ class RpguiDemo(ShowBase):
     def _wire_events(self):
         doc = self._doc
 
-        # Buttons
-        for btn_id, ev in (("btn-normal", "rpgui-btn-normal"),
-                            ("btn-golden", "rpgui-btn-golden")):
-            el = doc.getElementById(btn_id)
+        # Store all elements we attach listeners to so Python doesn't GC the
+        # wrappers and silently drop the callbacks via RemoveEventListener.
+        self._wired = []
+
+        def _wire(el_id, event, callback):
+            el = doc.get_element_by_id(el_id)
             if el:
-                el.addEventListener("click", ev)
-        self.accept("rpgui-btn-normal", self._on_button, ["normal"])
-        self.accept("rpgui-btn-golden", self._on_button, ["golden"])
+                el.add_event_listener(event, callback)
+                self._wired.append(el)
+
+        # Buttons
+        for btn_id, kind in (("btn-normal", "normal"), ("btn-golden", "golden")):
+            _wire(btn_id, "click", lambda ev, k=kind: self._on_button(k))
 
         # Radio buttons
         for rid, gender in (("radio-male", "male"), ("radio-female", "female")):
-            el = doc.getElementById(rid)
-            if el:
-                ev = f"rpgui-radio-{gender}"
-                el.addEventListener("click", ev)
-                self.accept(ev, self._on_radio, [gender])
+            _wire(rid, "click", lambda ev, g=gender: self._on_radio(g))
 
         # Checkboxes
         for i in range(2):
-            el = doc.getElementById(f"chk{i+1}")
-            if el:
-                ev = f"rpgui-chk{i}"
-                el.addEventListener("click", ev)
-                self.accept(ev, self._on_checkbox, [i])
+            _wire(f"chk{i+1}", "click", lambda ev, idx=i: self._on_checkbox(idx))
 
         # Class dropdown — poll value each frame (no change event needed)
         # Profession list — same
 
+        # Draggable panel (Group D)
+        drag_panel = doc.get_element_by_id("drag-panel")
+        if drag_panel:
+            self._wired.append(drag_panel)
+
+            def _on_dragstart(ev):
+                off = drag_panel.get_absolute_offset()
+                self._drag_offset = (
+                    ev.get("mouse_x", 0.0) - off.x,
+                    ev.get("mouse_y", 0.0) - off.y,
+                )
+
+            def _on_drag(ev):
+                x = ev.get("mouse_x", 0.0) - self._drag_offset[0]
+                y = ev.get("mouse_y", 0.0) - self._drag_offset[1]
+                drag_panel.set_property("left", f"{x:.0f}dp")
+                drag_panel.set_property("top",  f"{y:.0f}dp")
+
+            # drag_panel is kept alive by self._wired.
+            # Do not call doc.close() while this demo is running.
+            drag_panel.add_event_listener("dragstart", _on_dragstart)
+            drag_panel.add_event_listener("drag",      _on_drag)
+
     # ── Event handlers ──────────────────────────────────────────────
 
     def _on_button(self, kind):
-        out = self._doc.getElementById("btn-output")
+        out = self._doc.get_element_by_id("btn-output")
         if out:
-            out.setInnerRml(f"Clicked: {kind} button")
-        stat = self._doc.getElementById("stat-output")
+            out.set_inner_rml(f"Clicked: {kind} button")
+        stat = self._doc.get_element_by_id("stat-output")
         if stat:
-            stat.setInnerRml(f"Button '{kind}' clicked!")
+            stat.set_inner_rml(f"Button '{kind}' clicked!")
 
     def _on_radio(self, gender):
         self._gender = gender
         for rid, g in (("radio-male", "male"), ("radio-female", "female")):
-            el = self._doc.getElementById(rid)
+            el = self._doc.get_element_by_id(rid)
             if el:
-                el.setClass("checked", g == self._gender)
+                el.set_class("checked", g == self._gender)
 
     def _on_checkbox(self, idx):
         self._chk[idx] = not self._chk[idx]
-        el = self._doc.getElementById(f"chk{idx+1}")
+        el = self._doc.get_element_by_id(f"chk{idx+1}")
         if el:
-            el.setClass("checked", self._chk[idx])
+            el.set_class("checked", self._chk[idx])
 
     # ── DOM helpers ─────────────────────────────────────────────────
 
@@ -197,15 +218,15 @@ class RpguiDemo(ShowBase):
         for fill_id, pct in (("hp-fill",      self._hp),
                               ("mana-fill",    self._mana),
                               ("stamina-fill", self._stamina)):
-            el = self._doc.getElementById(fill_id)
+            el = self._doc.get_element_by_id(fill_id)
             if el:
-                el.setAttribute("style", f"width: {pct * 100:.1f}%;")
+                el.set_attribute("style", f"width: {pct * 100:.1f}%;")
 
     def _refresh_stats(self):
         def _set(el_id, text):
-            el = self._doc.getElementById(el_id)
+            el = self._doc.get_element_by_id(el_id)
             if el:
-                el.setInnerRml(text)
+                el.set_inner_rml(text)
 
         _set("stat-name",    self._name)
         _set("stat-class",   self._hero_class)
@@ -231,27 +252,27 @@ class RpguiDemo(ShowBase):
         self._stamina = 0.5 + 0.45 * math.sin(t * 0.7 + 2.1)
 
         # Poll class dropdown
-        sel = self._doc.getElementById("class-select")
+        sel = self._doc.get_element_by_id("class-select")
         if sel:
-            v = sel.getValue()
+            v = sel.get_value()
             if v and v != self._hero_class:
                 self._hero_class = v
 
         # Poll name inputs
-        inp_name = self._doc.getElementById("inp-name")
-        inp_last = self._doc.getElementById("inp-lastname")
+        inp_name = self._doc.get_element_by_id("inp-name")
+        inp_last = self._doc.get_element_by_id("inp-lastname")
         if inp_name and inp_last:
-            first = inp_name.getValue()
-            last  = inp_last.getValue()
+            first = inp_name.get_value()
+            last  = inp_last.get_value()
             full  = f"{first} {last}".strip()
             if full:
                 self._name = full
 
         # Poll slider
-        sl = self._doc.getElementById("slider-normal")
+        sl = self._doc.get_element_by_id("slider-normal")
         if sl:
             try:
-                self._slider_val = int(float(sl.getValue()))
+                self._slider_val = int(float(sl.get_value()))
             except ValueError:
                 pass
 

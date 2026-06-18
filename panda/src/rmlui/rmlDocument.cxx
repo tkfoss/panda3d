@@ -45,6 +45,9 @@ close() {
   if (_doc == nullptr) {
     return;
   }
+  // NOTE: Any RmlElement wrappers obtained from this document become invalid
+  // after the next RmlContext::update() call.  Do not use stored RmlElement
+  // references after calling close().
   _doc->Close();
   _doc = nullptr;
 }
@@ -83,4 +86,84 @@ set_title(const std::string &title) {
   if (_doc != nullptr) {
     _doc->SetTitle(title);
   }
+}
+
+/**
+ * Returns the URL the document was loaded from, or "[from memory]" for
+ * in-memory documents.
+ */
+std::string RmlDocument::
+get_source_url() const {
+  nassertr(_doc != nullptr, std::string());
+  return _doc->GetSourceURL();
+}
+
+/**
+ * Returns true if the document is currently shown as a modal dialog.
+ */
+bool RmlDocument::
+is_modal() const {
+  nassertr(_doc != nullptr, false);
+  return _doc->IsModal();
+}
+
+/**
+ * Pulls the document to the front of the context's document stack.
+ */
+void RmlDocument::
+pull_to_front() {
+  nassertv(_doc != nullptr);
+  _doc->PullToFront();
+}
+
+/**
+ * Pushes the document to the back of the context's document stack.
+ */
+void RmlDocument::
+push_to_back() {
+  nassertv(_doc != nullptr);
+  _doc->PushToBack();
+}
+
+/**
+ * Reloads all style sheets referenced by this document.
+ */
+void RmlDocument::
+reload_style_sheet() {
+  nassertv(_doc != nullptr);
+  _doc->ReloadStyleSheet();
+}
+
+/**
+ * Creates a new element with the given tag name.  The element is not yet
+ * part of the DOM; attach it with RmlElement.append_child().
+ */
+PT(RmlElement) RmlDocument::
+create_element(const std::string &tag) {
+  nassertr(_doc != nullptr, nullptr);
+  Rml::ElementPtr ptr = _doc->CreateElement(tag);
+  if (!ptr) {
+    return nullptr;
+  }
+  Rml::Element *raw = ptr.get();
+  PT(RmlElement) wrapper = new RmlElement(raw);
+  wrapper->_owned = std::move(ptr);
+  return wrapper;
+}
+
+/**
+ * Creates a new text node with the given content.  Attach it with
+ * RmlElement.append_child().
+ */
+PT(RmlElement) RmlDocument::
+create_text_node(const std::string &text) {
+  nassertr(_doc != nullptr, nullptr);
+  Rml::ElementPtr ptr = _doc->CreateTextNode(text);
+  if (!ptr) {
+    return nullptr;
+  }
+  Rml::Element *raw = ptr.get();
+  PT(RmlElement) wrapper = new RmlElement(raw);
+  wrapper->_owned = std::move(ptr);
+  return wrapper;
 }

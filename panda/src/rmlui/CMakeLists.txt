@@ -43,6 +43,7 @@ target_interrogate(p3rmlui config_rmlui.h rmlInputHandler.h rmlRegion.h rmlConte
 
 if(HAVE_RMLUI_DEBUGGER)
   target_compile_definitions(p3rmlui PRIVATE HAVE_RMLUI_DEBUGGER)
+  target_link_libraries(p3rmlui RmlUi::Debugger)
 endif()
 
 install(TARGETS p3rmlui

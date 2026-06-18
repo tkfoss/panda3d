@@ -3,11 +3,13 @@ Panda3D RmlUi — Data Binding Sample
 ======================================
 Demonstrates RmlUi DataModel binding from Python.
 
-  Basics tab   — data-model "basics" with data-value / data-if driven by
-                 Python callables via ctx.create_data_model() + bind_func().
-                 dirty_variable() / dirty_all() trigger DOM re-evaluation.
-  Events tab   — range slider polled each frame; mouse-click position tracker
-  Tree View tab— expandable tree toggled with set_class("expanded", …)
+  Basics tab    — data-model "basics" with {{ }} templates, data-if, driven by
+                  Python callables via ctx.create_data_model() + bind_func().
+                  dirty_variable() triggers DOM re-evaluation.
+  Events tab    — range slider polled each frame; mouse-click position from ev dict
+  data-for tab  — bind_list() registers a Python list; data-for renders each item.
+                  Add/Remove/Shuffle buttons mutate the list and call dirty_variable().
+                  Also shows the static expandable tree via set_class("expanded", …).
 
 Controls
 --------
@@ -17,6 +19,7 @@ Escape  : quit
 
 import os
 import html
+import random
 
 from direct.showbase.ShowBase import ShowBase
 from panda3d.core import loadPrcFileData, LVecBase4f
@@ -27,6 +30,11 @@ loadPrcFileData("", f"model-path {ASSETS}")
 loadPrcFileData("", "win-size 1000 680")
 loadPrcFileData("", "window-title RmlUi — Data Binding Sample")
 
+_WORDS = [
+    "goblin", "troll", "dragon", "knight", "wizard",
+    "archer", "rogue", "paladin", "ranger", "monk",
+]
+
 
 class DataBindingSample(ShowBase):
     def __init__(self):
@@ -34,10 +42,11 @@ class DataBindingSample(ShowBase):
         self.disableMouse()
         self.win.setClearColor(LVecBase4f(0.07, 0.08, 0.10, 1))
 
-        # Python-side state — the DataModel getters read from these
+        # Python-side state — DataModel getters read from these
         self._animal    = "dog"
         self._show_text = True
         self._rating    = 50
+        self._items     = ["goblin", "troll", "dragon"]
         self._tree_expanded = {
             "node-src":     True,
             "node-rmlui":   False,
@@ -48,24 +57,28 @@ class DataBindingSample(ShowBase):
         self.mouseWatcher.attachNewNode(self.input_handler)
 
         self.rml = RmlRegion.make("data-binding", self.win)
-        self.rml.setInputHandler(self.input_handler)
+        self.rml.set_input_handler(self.input_handler)
 
-        ctx = self.rml.getContext()
+        ctx = self.rml.get_context()
         for ttf in ("LatoLatin-Regular.ttf", "LatoLatin-Bold.ttf",
                     "LatoLatin-Italic.ttf", "LatoLatin-BoldItalic.ttf"):
-            ctx.loadFontFace(os.path.join(ASSETS, ttf))
+            ctx.load_font_face(os.path.join(ASSETS, ttf))
 
-        # --- Create DataModel before loading the document so that
-        #     data-value / data-if expressions resolve on first layout. ---
-        self._dm = ctx.createDataModel("basics")
+        # --- Create DataModels before loading the document so that
+        #     data-value / data-if / data-for expressions resolve on first layout. ---
+        self._dm = ctx.create_data_model("basics")
         self._dm.bind_func("animal",    lambda: self._animal)
         self._dm.bind_func("show_text", lambda: self._show_text)
 
-        self._doc = ctx.loadDocument(os.path.join(ASSETS, "data_binding.rml"))
+        self._dm_list = ctx.create_data_model("list-demo")
+        self._dm_list.bind_list("items", lambda: self._items)
+        self._dm_list.bind_func("count", lambda: len(self._items))
+
+        self._doc = ctx.load_document(os.path.join(ASSETS, "data_binding.rml"))
         if not self._doc:
             raise RuntimeError("data_binding.rml not found")
         self._doc.show()
-        self.rml.initDebugger()
+        self.rml.init_debugger()
 
         self._wire_events()
         self._refresh_tree()
@@ -73,51 +86,82 @@ class DataBindingSample(ShowBase):
 
         self.accept("escape", self.userExit)
         def toggle_dbg():
-            self.rml.setDebuggerVisible(not self.rml.isDebuggerVisible())
+            self.rml.set_debugger_visible(not self.rml.is_debugger_visible())
         self.accept("f1", toggle_dbg)
         self.accept("`", toggle_dbg)
 
     def _wire_events(self):
+        # Basics tab
         for animal in ("dog", "cat", "narwhal"):
-            btn = self._doc.getElementById(f"btn-{animal}")
+            btn = self._doc.get_element_by_id(f"btn-{animal}")
             if btn:
-                ev = f"rmlui-animal-{animal}"
-                btn.addEventListener("click", ev)
-                self.accept(ev, self._set_animal, [animal])
+                btn.add_event_listener("click", lambda ev, a=animal: self._set_animal(a))
 
-        btn_text = self._doc.getElementById("btn-toggle-text")
+        btn_text = self._doc.get_element_by_id("btn-toggle-text")
         if btn_text:
-            btn_text.addEventListener("click", "rmlui-toggle-text")
-            self.accept("rmlui-toggle-text", self._toggle_text)
+            btn_text.add_event_listener("click", lambda ev: self._toggle_text())
 
-        mouse_box = self._doc.getElementById("mouse-box")
+        # Events tab
+        mouse_box = self._doc.get_element_by_id("mouse-box")
         if mouse_box:
-            mouse_box.addEventListener("click", "rmlui-mouse-click")
-            self.accept("rmlui-mouse-click", self._on_mouse_click)
+            mouse_box.add_event_listener("click", self._on_mouse_click)
 
+        # data-for tab — list mutation buttons
+        btn_add = self._doc.get_element_by_id("btn-list-add")
+        if btn_add:
+            btn_add.add_event_listener("click", lambda ev: self._list_add())
+
+        btn_remove = self._doc.get_element_by_id("btn-list-remove")
+        if btn_remove:
+            btn_remove.add_event_listener("click", lambda ev: self._list_remove())
+
+        btn_shuffle = self._doc.get_element_by_id("btn-list-shuffle")
+        if btn_shuffle:
+            btn_shuffle.add_event_listener("click", lambda ev: self._list_shuffle())
+
+        # data-for tab — tree toggle
         for node_id in self._tree_expanded:
-            node = self._doc.getElementById(node_id)
+            node = self._doc.get_element_by_id(node_id)
             if node:
-                ev = f"rmlui-tree-{node_id}"
-                node.addEventListener("click", ev)
-                self.accept(ev, self._toggle_tree_node, [node_id])
+                node.add_event_listener("click", lambda ev, nid=node_id: self._toggle_tree_node(nid))
+
+    # ── Basics tab ──────────────────────────────────────────────────
 
     def _set_animal(self, animal):
         self._animal = animal
-        # Tell RmlUi that "animal" changed; DOM re-evaluates data-value="animal"
         self._dm.dirty_variable("animal")
 
     def _toggle_text(self):
         self._show_text = not self._show_text
         self._dm.dirty_variable("show_text")
 
-    def _on_mouse_click(self):
-        if base.mouseWatcherNode.hasMouse():
-            mx = round(base.mouseWatcherNode.getMouseX(), 3)
-            my = round(base.mouseWatcherNode.getMouseY(), 3)
-            el = self._doc.getElementById("mouse-positions")
-            if el:
-                el.setInnerRml(html.escape(f"({mx}, {my})"))
+    # ── Events tab ──────────────────────────────────────────────────
+
+    def _on_mouse_click(self, ev):
+        mx = round(ev.get("mouse_x", 0), 1)
+        my = round(ev.get("mouse_y", 0), 1)
+        el = self._doc.get_element_by_id("mouse-positions")
+        if el:
+            el.set_inner_rml(html.escape(f"({mx}, {my}) px"))
+
+    # ── data-for tab ────────────────────────────────────────────────
+
+    def _list_dirty(self):
+        self._dm_list.dirty_variable("items")
+        self._dm_list.dirty_variable("count")
+
+    def _list_add(self):
+        self._items.append(random.choice(_WORDS))
+        self._list_dirty()
+
+    def _list_remove(self):
+        if self._items:
+            self._items.pop()
+            self._list_dirty()
+
+    def _list_shuffle(self):
+        random.shuffle(self._items)
+        self._list_dirty()
 
     def _toggle_tree_node(self, node_id):
         self._tree_expanded[node_id] = not self._tree_expanded[node_id]
@@ -125,24 +169,26 @@ class DataBindingSample(ShowBase):
 
     def _refresh_tree(self):
         for node_id, expanded in self._tree_expanded.items():
-            node = self._doc.getElementById(node_id)
+            node = self._doc.get_element_by_id(node_id)
             if node:
-                node.setClass("expanded", expanded)
+                node.set_class("expanded", expanded)
+
+    # ── Per-frame update ────────────────────────────────────────────
 
     def _update(self, task):
-        slider = self._doc.getElementById("rating-slider")
+        slider = self._doc.get_element_by_id("rating-slider")
         if slider:
-            val_str = slider.getValue()
+            val_str = slider.get_value()
             try:
                 val = int(float(val_str))
             except ValueError:
                 val = self._rating
             if val != self._rating:
                 self._rating = val
-                el = self._doc.getElementById("rating-val")
+                el = self._doc.get_element_by_id("rating-val")
                 if el:
-                    el.setInnerRml(str(val))
-                fb = self._doc.getElementById("rating-feedback")
+                    el.set_inner_rml(str(val))
+                fb = self._doc.get_element_by_id("rating-feedback")
                 if fb:
                     if val < 30:
                         msg = "Low rating — improvements needed!"
@@ -150,7 +196,7 @@ class DataBindingSample(ShowBase):
                         msg = "Decent rating."
                     else:
                         msg = "Great rating! Thanks!"
-                    fb.setInnerRml(html.escape(msg))
+                    fb.set_inner_rml(html.escape(msg))
         return task.cont
 
 

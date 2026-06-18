@@ -28,15 +28,12 @@
 TypeHandle RmlRegion::_type_handle;
 
 /**
- * Returns a Python-accessible wrapper around the underlying Rml::Context.
- * A new wrapper object is created on each call; the context itself is shared.
+ * Returns the cached Python-accessible wrapper around the underlying
+ * Rml::Context.  The same object is returned on every call.
  */
 PT(RmlContext) RmlRegion::
 get_context() const {
-  if (_context == nullptr) {
-    return nullptr;
-  }
-  return new RmlContext(_context);
+  return _rml_context;
 }
 
 /**
@@ -60,7 +57,13 @@ RmlRegion(GraphicsOutput *window, const LVecBase4 &dr_dimensions,
 
   _interface.init(window);
   _context = Rml::CreateContext(context_name, dimensions, &_interface);
-  nassertv(_context != nullptr);
+  if (_context == nullptr) {
+    rmlui_cat.error()
+      << "Failed to create RmlUi context '" << context_name
+      << "' — a context with that name may already exist.\n";
+    return;
+  }
+  _rml_context = new RmlContext(_context);
 
   _lens = new OrthographicLens;
   _lens->set_film_size(dimensions.x, -dimensions.y);
@@ -79,6 +82,10 @@ RmlRegion::
   if (_context != nullptr) {
     Rml::RemoveContext(_context->GetName());
     _context = nullptr;
+    if (_rml_context) {
+      _rml_context->_ctx = nullptr;
+      _rml_context = nullptr;
+    }
   }
 }
 
@@ -89,6 +96,8 @@ RmlRegion::
 void RmlRegion::
 do_cull(CullHandler *cull_handler, SceneSetup *scene_setup,
         GraphicsStateGuardian *gsg, Thread *current_thread) {
+
+  if (_context == nullptr) return;
 
   PStatTimer timer(get_cull_region_pcollector(), current_thread);
 

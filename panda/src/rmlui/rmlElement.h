@@ -18,10 +18,12 @@
 #include "referenceCount.h"
 
 #ifndef CPPPARSER
+#include "luse.h"
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/EventListener.h>
 #include <string>
+#include <memory>
 #endif
 
 /**
@@ -46,36 +48,95 @@ PUBLISHED:
   std::string get_value() const;
   void set_value(const std::string &value);
 
-  // Attach a named Panda3D event that fires when this element receives
-  // the given DOM event (e.g. "click").  The event name thrown on the
-  // Panda3D Messenger is panda_event.  Listeners accumulate; call again
-  // with a different dom_event/panda_event to attach more.
-  void add_event_listener(const std::string &dom_event,
-                          const std::string &panda_event);
-
   MAKE_PROPERTY(id, get_id);
   MAKE_PROPERTY(inner_rml, get_inner_rml, set_inner_rml);
   MAKE_PROPERTY(value, get_value, set_value);
+
+  // A1 — geometry queries
+  LVecBase2f get_relative_offset() const;
+  LVecBase2f get_absolute_offset() const;
+  float get_offset_width() const;
+  float get_offset_height() const;
+
+  MAKE_PROPERTY(offset_width,  get_offset_width);
+  MAKE_PROPERTY(offset_height, get_offset_height);
+
+  // A2 — attribute management
+  bool has_attribute(const std::string &name) const;
+  void remove_attribute(const std::string &name);
+
+  // A3 — inline style by property name
+  bool set_property(const std::string &name, const std::string &value);
+  void remove_property(const std::string &name);
+
+  // A4 — pseudo-class query
+  bool is_pseudo_class_set(const std::string &pseudo_class) const;
+
+  // A5 — scroll control
+  void scroll_into_view(bool align_with_top = true);
+
+  // A6 — CSS selector query
+  PT(RmlElement) query_selector(const std::string &selector);
+
+  // A7 — DOM tree traversal
+  PT(RmlElement) get_parent_node() const;
+  PT(RmlElement) get_child(int index) const;
+  int get_num_children() const;
+
+  MAKE_PROPERTY(num_children, get_num_children);
+
+  // A8 — programmatic DOM manipulation
+  PT(RmlElement) append_child(RmlElement *child);
+  void remove_child(RmlElement *child);
+
+#ifdef HAVE_PYTHON
+  // Attach a Python callable to a DOM event on this element.
+  // When the DOM event fires, callback(event_dict) is called where event_dict
+  // is a Python dict containing all event parameters (mouse_x, mouse_y,
+  // value, type, etc.) plus the key "type" set to the DOM event type string.
+  // Multiple listeners may be attached by calling this method repeatedly.
+  void add_event_listener(const std::string &dom_event, PyObject *callback);
+#endif
 
 public:
   RmlElement() = default;
 #ifndef CPPPARSER
   explicit RmlElement(Rml::Element *el) : _el(el) {}
+  // _owned is not copyable; a copied wrapper is a non-owning alias of the same element.
+  RmlElement(const RmlElement &other) : _el(nullptr) {}
+  RmlElement &operator=(const RmlElement &) = delete;
   Rml::Element *get_raw() const { return _el; }
 
   ~RmlElement();
 
 protected:
-  Rml::Element *_el = nullptr;
+  friend class RmlDocument;
 
+  Rml::Element *_el = nullptr;
+  // Non-null only for freshly-created (not yet DOM-inserted) elements.
+  // append_child() moves this into the DOM and clears it.
+  Rml::ElementPtr _owned;
+
+#ifdef HAVE_PYTHON
   struct PandaEventListener : public Rml::EventListener {
-    std::string _panda_event;
-    explicit PandaEventListener(const std::string &ev) : _panda_event(ev) {}
-    void ProcessEvent(Rml::Event &) override;
-    void OnDetach(Rml::Element *) override { delete this; }
+    std::shared_ptr<PyObject> _callback;
+    RmlElement *_owner;
+    std::string _event;
+    PandaEventListener(std::shared_ptr<PyObject> cb, RmlElement *owner,
+                       const std::string &event)
+      : _callback(std::move(cb)), _owner(owner), _event(event) {}
+    void ProcessEvent(Rml::Event &event) override;
+    void OnDetach(Rml::Element *) override {
+      if (_owner) {
+        _owner->_el = nullptr;
+        _owner = nullptr;
+      }
+      delete this;
+    }
   };
   pvector<PandaEventListener *> _listeners;
-#endif
+#endif  // HAVE_PYTHON
+#endif  // !CPPPARSER
 };
 
 #endif

@@ -60,6 +60,8 @@ PUBLISHED:
                                 GraphicsOutput *window,
                                 const LVecBase4 &dimensions);
 
+  bool is_valid() const { return _rml_context != nullptr; }
+
   PT(RmlContext) get_context() const;
   MAKE_PROPERTY(context, get_context);
 
@@ -78,6 +80,7 @@ private:
   Rml::Context *_context = nullptr;
 #endif
 
+  PT(RmlContext) _rml_context;
   PT(OrthographicLens) _lens;
   PT(RmlInputHandler) _input_handler;
 

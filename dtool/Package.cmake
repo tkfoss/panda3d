@@ -753,8 +753,13 @@ package_option(RmlUi
   "Enable this option to support RmlUi HTML/CSS UI rendering."
   IMPORTED_AS RmlUi::RmlUi)
 
-package_status(RmlUi "RmlUi")
+if(TARGET RmlUi::Debugger)
+  set(HAVE_RMLUI_DEBUGGER ON)
+else()
+  set(HAVE_RMLUI_DEBUGGER OFF)
+endif()
 
+package_status(RmlUi "RmlUi")
 
 
 #

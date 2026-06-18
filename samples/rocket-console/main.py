@@ -3,7 +3,7 @@ Show how to use RmlUi in Panda3D.
 """
 import os
 import sys
-from panda3d.core import loadPrcFileData, Point3, Vec4, Mat4, LoaderOptions  # @UnusedImport
+from panda3d.core import loadPrcFileData, Vec4, Mat4
 from panda3d.core import DirectionalLight, AmbientLight, PointLight
 from panda3d.core import Texture, PNMImage
 from panda3d.core import PandaSystem
@@ -48,7 +48,6 @@ class MyApp(ShowBase):
 
         self.loadingTask = None
 
-        #self.startModelLoadingAsync()
         self.startModelLoading()
 
         self.inputHandler = RmlInputHandler()
@@ -66,7 +65,7 @@ class MyApp(ShowBase):
         Unlike libRocket, RmlUi requires fonts to be loaded per-context.
         Call this after creating a context and pass it in.
         """
-        context.loadFontFace(os.path.join(ASSETS, "modenine.ttf"))
+        context.load_font_face(os.path.join(ASSETS, "modenine.ttf"))
 
 
     def startModelLoading(self):
@@ -80,72 +79,30 @@ class MyApp(ShowBase):
         self.monitorNP = self.loader.loadModel("monitor")
         self.keyboardNP = self.loader.loadModel("takeyga_kb")
 
-    def startModelLoadingAsync(self):
-        """
-        NOTE: this seems to invoke a few bugs (crashes, sporadic model
-        reading errors, etc) so is disabled for now...
-        """
-        self.monitorNP = None
-        self.keyboardNP = None
-        self.loadingError = False
-
-        # force the "loading" to take some time after the first run...
-        options = LoaderOptions()
-        options.setFlags(options.getFlags() | LoaderOptions.LFNoCache)
-
-        def gotMonitorModel(model):
-            if not model:
-                self.loadingError = True
-            self.monitorNP = model
-
-        self.loader.loadModel("monitor", loaderOptions=options, callback=gotMonitorModel)
-
-        def gotKeyboardModel(model):
-            if not model:
-                self.loadingError = True
-            self.keyboardNP = model
-
-        self.loader.loadModel("takeyga_kb", loaderOptions=options, callback=gotKeyboardModel)
-
     def openLoadingDialog(self):
         self.userConfirmed = False
 
         self.windowRmlRegion = RmlRegion.make('pandaRml', self.win)
         self.windowRmlRegion.setActive(1)
 
-        self.windowRmlRegion.setInputHandler(self.inputHandler)
+        self.windowRmlRegion.set_input_handler(self.inputHandler)
 
-        self.windowContext = self.windowRmlRegion.getContext()
+        self.windowContext = self.windowRmlRegion.get_context()
 
         self.loadRmlUiFonts(self.windowContext)
 
-        self.loadingDocument = self.windowContext.loadDocument(os.path.join(ASSETS, "loading.rml"))
+        self.loadingDocument = self.windowContext.load_document(os.path.join(ASSETS, "loading.rml"))
         if not self.loadingDocument:
             raise AssertionError("did not find loading.rml")
 
         self.loadingDots = 0
-        el = self.loadingDocument.getElementById('loading-label')
+        el = self.loadingDocument.get_element_by_id('loading-label')
         self.loadingText = el
         self.stopLoadingTime = globalClock.getFrameTime() + 3
         self.loadingTask = self.taskMgr.add(self.cycleLoading, 'doc changer')
 
-        # note: you may encounter errors like 'KeyError: 'document'"
-        # when invoking events using methods from your own scripts with this
-        # obvious code:
-        #
-        # self.loadingDocument.AddEventListener('aboutToClose',
-        #                                       self.onLoadingDialogDismissed, True)
-        #
-        # A workaround is to define callback methods in standalone Python
-        # files with event, self, and document defined to None.
-        #
-        # see https://www.panda3d.org/forums/viewtopic.php?f=4&t=16412
-        #
-        # In RmlUi, we use addEventListener with a Panda3D event name instead:
-
-        body = self.loadingDocument.getElementById('loading-body')
-        body.addEventListener('click', 'rmlui-aboutToClose')
-        self.accept('rmlui-aboutToClose', self.handleAboutToClose)
+        body = self.loadingDocument.get_element_by_id('loading-body')
+        body.add_event_listener('click', lambda ev: self.handleAboutToClose())
 
         self.loadingDocument.show()
 
@@ -153,30 +110,6 @@ class MyApp(ShowBase):
         self.userConfirmed = True
         if self.monitorNP and self.keyboardNP:
             self.onLoadingDialogDismissed()
-
-    def attachCustomRmlUiEvent(self, element, rmlEventName, pandaHandler, once=False):
-        # handle custom event
-
-        # note: you may encounter errors like 'KeyError: 'document'"
-        # when invoking events using methods from your own scripts with this
-        # obvious code:
-        #
-        # self.loadingDocument.AddEventListener('aboutToClose',
-        #                                       self.onLoadingDialogDismissed, True)
-        #
-        # see https://www.panda3d.org/forums/viewtopic.php?f=4&t=16412
-
-        # this technique converts RmlUi events to Panda3D events
-
-        pandaEvent = 'panda.' + rmlEventName
-
-        element.addEventListener(rmlEventName, pandaEvent)
-
-        if once:
-            self.acceptOnce(pandaEvent, pandaHandler)
-        else:
-            self.accept(pandaEvent, pandaHandler)
-
 
     def cycleLoading(self, task):
         """
@@ -188,16 +121,16 @@ class MyApp(ShowBase):
 
         now = globalClock.getFrameTime()
         if self.monitorNP and self.keyboardNP:
-            text.setInnerRml("Ready")
+            text.set_inner_rml("Ready")
             if now > self.stopLoadingTime or self.userConfirmed:
                 self.onLoadingDialogDismissed()
                 return task.done
         elif self.loadingError:
-            text.setInnerRml("Assets not found")
+            text.set_inner_rml("Assets not found")
         else:
             count = 5
             intv = int(now * 4) % count  # @UndefinedVariable
-            text.setInnerRml("Loading" + ("." * (1+intv)) + (" " * (2 - intv)))
+            text.set_inner_rml("Loading" + ("." * (1+intv)) + (" " * (2 - intv)))
 
         return task.cont
 
@@ -234,7 +167,7 @@ class MyApp(ShowBase):
     def showStarting(self):
         """ Models are loaded, so update the dialog,
         fade out, then transition to the console. """
-        self.loadingText.setInnerRml('Starting...')
+        self.loadingText.set_inner_rml('Starting...')
 
         alphaInterval = self.fadeOut(self.loadingText, 0.5)
         alphaInterval.setDoneEvent('fadeOutFinished')
@@ -296,12 +229,12 @@ class MyApp(ShowBase):
         faceplate.setTexture(tex, 1)
 
         self.rmlConsole = RmlRegion.make('console', mybuffer)
-        self.rmlConsole.setInputHandler(self.inputHandler)
+        self.rmlConsole.set_input_handler(self.inputHandler)
 
-        self.consoleContext = self.rmlConsole.getContext()
-        self.consoleContext.loadFontFace(os.path.join(ASSETS, "dos437.ttf"))
+        self.consoleContext = self.rmlConsole.get_context()
+        self.consoleContext.load_font_face(os.path.join(ASSETS, "dos437.ttf"))
 
-        doc = self.consoleContext.loadDocument(os.path.join(ASSETS, "console.rml"))
+        doc = self.consoleContext.load_document(os.path.join(ASSETS, "console.rml"))
         if not doc:
             raise AssertionError("did not find console.rml")
         doc.show()

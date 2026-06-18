@@ -170,17 +170,45 @@
     <div id="mouse-positions" class="status">No positions recorded yet.</div>
 </panel>
 
-<!-- ─── Tree View ─────────────────────────────────────────────────── -->
-<tab>Tree View</tab>
-<panel id="panel-tree">
-    <h1>Expandable Tree</h1>
-    <p>Upstream uses <code>data-for</code> over a file-tree data model.
-    Here we build the tree directly in RML and toggle nodes from Python
-    using <code>set_class("expanded", …)</code>.</p>
+<!-- ─── data-for / bind_list ───────────────────────────────────────── -->
+<tab>data-for</tab>
+<panel id="panel-list">
+    <h1>List Binding — <code>bind_list</code> + <code>data-for</code></h1>
+    <p>Python registers a list getter with <code>dm.bind_list("items", getter)</code>.
+    RML renders each item with <code>data-for</code> and displays its value with
+    <code>{{ item }}</code>.  Call <code>dm.dirty_variable("items")</code> after
+    mutating the list to refresh the DOM.</p>
 
-    <p>Toggle expand/collapse by clicking node labels.  A <code>data-for</code>
-    driven tree requires array binding; this sample uses <code>set_class</code>
-    directly from Python.</p>
+    <div class="kv-row" style="margin-bottom: 6dp;">
+        <button id="btn-list-add">Add item</button>
+        <button id="btn-list-remove">Remove last</button>
+        <button id="btn-list-shuffle">Shuffle</button>
+    </div>
+
+    <div data-model="list-demo">
+        <p><span class="kv-key">Count:</span>
+           <span class="kv-val" id="list-count">{{ count }}</span></p>
+        <div id="list-items" style="
+            display: block;
+            background: #1a2030;
+            border: 1dp #3a4860;
+            border-radius: 4dp;
+            padding: 8dp 14dp;
+            margin: 6dp 0;
+            min-height: 40dp;
+        ">
+            <div data-for="item : items" style="
+                display: block;
+                padding: 3dp 0;
+                color: #9cf;
+                font-size: 17dp;
+            ">{{ item }}</div>
+        </div>
+    </div>
+
+    <h1 style="margin-top: 18dp;">Expandable Tree (set_class)</h1>
+    <p>Static tree with Python-toggled expand/collapse via
+    <code>set_class("expanded", …)</code> — no DataModel required.</p>
 
     <div id="tree-root">
         <div class="tree-node expanded" id="node-src">
@@ -201,10 +229,10 @@
         <div class="tree-node" id="node-samples">
             <span class="tree-icon dir">▶</span>samples/
             <div class="tree-children">
-                <div class="tree-node"><span class="tree-icon file">·</span>rmlui-animation/</div>
-                <div class="tree-node"><span class="tree-icon file">·</span>rmlui-drag/</div>
-                <div class="tree-node"><span class="tree-icon file">·</span>rmlui-benchmark/</div>
-                <div class="tree-node"><span class="tree-icon file">·</span>rmlui-data-binding/</div>
+                <div class="tree-node"><span class="tree-icon file">·</span>01_features.py</div>
+                <div class="tree-node"><span class="tree-icon file">·</span>02_benchmark.py</div>
+                <div class="tree-node"><span class="tree-icon file">·</span>03_data_binding.py</div>
+                <div class="tree-node"><span class="tree-icon file">·</span>04_rpgui_demo.py</div>
             </div>
         </div>
     </div>

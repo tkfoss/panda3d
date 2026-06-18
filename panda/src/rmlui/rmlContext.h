@@ -19,6 +19,7 @@
 #include "pointerTo.h"
 
 class RmlDocument;
+class RmlElement;
 class RmlDataModel;
 
 #ifndef CPPPARSER
@@ -51,6 +52,30 @@ PUBLISHED:
   MAKE_PROPERTY(width, get_width);
   MAKE_PROPERTY(height, get_height);
   MAKE_PROPERTY(name, get_name);
+
+  // B1 — mouse interaction query
+  bool is_mouse_interacting() const;
+
+  // B2 — hit-test and hover/focus
+  PT(RmlElement) get_element_at_point(float x, float y) const;
+  PT(RmlElement) get_hover_element() const;
+  PT(RmlElement) get_focus_element() const;
+
+  MAKE_PROPERTY(hover_element, get_hover_element);
+  MAKE_PROPERTY(focus_element, get_focus_element);
+
+  // B3 — document lifecycle
+  PT(RmlDocument) load_document_from_memory(const std::string &rml,
+                                            const std::string &source_url = std::string());
+  void unload_document(RmlDocument *doc);
+  void unload_all_documents();
+  int get_num_documents() const;
+
+  MAKE_PROPERTY(num_documents, get_num_documents);
+
+  // B4 — HiDPI and cursor
+  void set_density_independent_pixel_ratio(float ratio);
+  void enable_mouse_cursor(bool enable);
 
 public:
   RmlContext() = default;

@@ -473,3 +473,19 @@ input[type=range].golden sliderbar      { decorator: image(sl-g-thumb fill); }
     font-size: 12dp;
     color: #adf;
 }
+
+/* ── Draggable panel ──────────────────────────────────────────────── */
+
+#drag-panel {
+    position: absolute;
+    left: 550dp;
+    top: 460dp;
+    width: 240dp;
+    drag: drag;
+    cursor: move;
+    z-index: 10;
+}
+
+#drag-panel h1 {
+    cursor: move;
+}

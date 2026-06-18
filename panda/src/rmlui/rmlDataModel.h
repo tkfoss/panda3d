@@ -19,9 +19,12 @@
 
 #ifndef CPPPARSER
 #include <RmlUi/Core/DataModelHandle.h>
+#include <RmlUi/Core/DataVariable.h>
 #include <RmlUi/Core/Variant.h>
 #include <string>
 #include <functional>
+#include <vector>
+#include <memory>
 #endif
 
 /**
@@ -42,11 +45,18 @@ PUBLISHED:
                  PyObject *getter,
                  PyObject *setter = nullptr);
 
+  // Bind a list-valued variable for use with data-for.
+  // getter() must return a Python list of scalars (bool/int/float/str).
+  // Call dirty_variable(name) after mutating the list to trigger DOM refresh.
+  bool bind_list(const std::string &name, PyObject *getter);
+
   bool bind_event_callback(const std::string &name, PyObject *callback);
 #endif  // HAVE_PYTHON
 
 public:
   RmlDataModel() = default;
+  RmlDataModel(const RmlDataModel &) = delete;
+  RmlDataModel &operator=(const RmlDataModel &) = delete;
 #ifndef CPPPARSER
   explicit RmlDataModel(Rml::DataModelHandle handle,
                         Rml::DataModelConstructor constructor)
@@ -56,6 +66,9 @@ private:
   bool _valid = false;
   Rml::DataModelHandle _handle;
   Rml::DataModelConstructor _constructor;
+  // Owns custom VariableDefinition objects whose pointers are stored inside
+  // DataVariables registered with the model.  Must outlive the model.
+  std::vector<std::unique_ptr<Rml::VariableDefinition>> _custom_definitions;
 #endif
 };
 

@@ -47,24 +47,24 @@ class BenchmarkSample(ShowBase):
         self.mouseWatcher.attachNewNode(self.input_handler)
 
         self.rml = RmlRegion.make("benchmark", self.win)
-        self.rml.setInputHandler(self.input_handler)
+        self.rml.set_input_handler(self.input_handler)
 
-        ctx = self.rml.getContext()
+        ctx = self.rml.get_context()
         for ttf in ("LatoLatin-Regular.ttf", "LatoLatin-Bold.ttf",
                     "LatoLatin-Italic.ttf", "LatoLatin-BoldItalic.ttf"):
-            ctx.loadFontFace(os.path.join(ASSETS, ttf))
+            ctx.load_font_face(os.path.join(ASSETS, ttf))
 
-        self._doc = ctx.loadDocument(os.path.join(ASSETS, "benchmark.rml"))
+        self._doc = ctx.load_document(os.path.join(ASSETS, "benchmark.rml"))
         if not self._doc:
             raise RuntimeError("benchmark.rml not found")
         self._doc.show()
-        self.rml.initDebugger()
+        self.rml.init_debugger()
 
-        self._grid      = self._doc.getElementById("grid")
-        self._el_count  = self._doc.getElementById("el-count")
-        self._lit_count = self._doc.getElementById("lit-count")
-        self._frame_el  = self._doc.getElementById("frame-count")
-        self._fps_el    = self._doc.getElementById("fps-val")
+        self._grid      = self._doc.get_element_by_id("grid")
+        self._el_count  = self._doc.get_element_by_id("el-count")
+        self._lit_count = self._doc.get_element_by_id("lit-count")
+        self._frame_el  = self._doc.get_element_by_id("frame-count")
+        self._fps_el    = self._doc.get_element_by_id("fps-val")
 
         for btn_id, handler in (
             ("btn-add",    self._add_batch),
@@ -72,18 +72,16 @@ class BenchmarkSample(ShowBase):
             ("btn-clear",  self._clear_all),
             ("btn-toggle", self._toggle_random),
         ):
-            el = self._doc.getElementById(btn_id)
+            el = self._doc.get_element_by_id(btn_id)
             if el:
-                ev = f"rmlui-{btn_id}"
-                el.addEventListener("click", ev)
-                self.accept(ev, handler)
+                el.add_event_listener("click", lambda ev, h=handler: h())
 
         self._add_batch()
         self.taskMgr.add(self._update, "benchmark-update")
 
         self.accept("escape", self.userExit)
         def toggle_dbg():
-            self.rml.setDebuggerVisible(not self.rml.isDebuggerVisible())
+            self.rml.set_debugger_visible(not self.rml.is_debugger_visible())
         self.accept("f1", toggle_dbg)
         self.accept("`", toggle_dbg)
 
@@ -95,9 +93,9 @@ class BenchmarkSample(ShowBase):
             bid = f"box-{self._counter}"
             self._counter += 1
             markup += f'<div class="box" id="{html.escape(bid)}">{self._counter % 100}</div>'
-        self._grid.setInnerRml(self._grid.getInnerRml() + markup)
+        self._grid.set_inner_rml(self._grid.get_inner_rml() + markup)
         for i in range(self._counter - BATCH, self._counter):
-            el = self._doc.getElementById(f"box-{i}")
+            el = self._doc.get_element_by_id(f"box-{i}")
             if el:
                 self._boxes.append((f"box-{i}", el))
         self._update_counts()
@@ -113,12 +111,12 @@ class BenchmarkSample(ShowBase):
             for bid, _ in keep
         )
         if self._grid:
-            self._grid.setInnerRml(markup)
+            self._grid.set_inner_rml(markup)
         for bid, _ in remove:
             self._lit.discard(bid)
         self._boxes = []
         for bid, _ in keep:
-            el = self._doc.getElementById(bid)
+            el = self._doc.get_element_by_id(bid)
             if el:
                 self._boxes.append((bid, el))
         self._update_counts()
@@ -127,7 +125,7 @@ class BenchmarkSample(ShowBase):
         self._boxes.clear()
         self._lit.clear()
         if self._grid:
-            self._grid.setInnerRml("")
+            self._grid.set_inner_rml("")
         self._update_counts()
 
     def _toggle_random(self):
@@ -135,7 +133,7 @@ class BenchmarkSample(ShowBase):
             return
         for bid, el in random.sample(self._boxes, max(1, len(self._boxes) // 10)):
             is_lit = bid in self._lit
-            el.setClass("lit", not is_lit)
+            el.set_class("lit", not is_lit)
             if is_lit:
                 self._lit.discard(bid)
             else:
@@ -144,15 +142,15 @@ class BenchmarkSample(ShowBase):
 
     def _update_counts(self):
         if self._el_count:
-            self._el_count.setInnerRml(str(len(self._boxes)))
+            self._el_count.set_inner_rml(str(len(self._boxes)))
         if self._lit_count:
-            self._lit_count.setInnerRml(str(len(self._lit)))
+            self._lit_count.set_inner_rml(str(len(self._lit)))
 
     def _update(self, task):
         if self._frame_el:
-            self._frame_el.setInnerRml(str(globalClock.getFrameCount()))
+            self._frame_el.set_inner_rml(str(globalClock.getFrameCount()))
         if self._fps_el:
-            self._fps_el.setInnerRml(f"{globalClock.getAverageFrameRate():.1f}")
+            self._fps_el.set_inner_rml(f"{globalClock.getAverageFrameRate():.1f}")
         return task.cont
 
 

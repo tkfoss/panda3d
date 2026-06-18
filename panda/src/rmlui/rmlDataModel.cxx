@@ -19,10 +19,6 @@
 #include <RmlUi/Core/Variant.h>
 #endif  // CPPPARSER
 
-// ---------------------------------------------------------------------------
-// RmlDataModel (non-Python methods)
-// ---------------------------------------------------------------------------
-
 /**
  * Returns true if this handle refers to a live data model.
  */
@@ -52,10 +48,22 @@ dirty_all() {
 
 #if defined(HAVE_PYTHON) && !defined(CPPPARSER)
 #include "py_panda.h"
+#include <memory>
+#include <vector>
+#include <RmlUi/Core/DataVariable.h>
 
-// ---------------------------------------------------------------------------
-// Helpers: convert between Rml::Variant and Python objects
-// ---------------------------------------------------------------------------
+#ifndef RML_PY_DECREF_WITH_GIL_DEFINED
+#define RML_PY_DECREF_WITH_GIL_DEFINED
+static void py_decref_with_gil(PyObject *obj) {
+  if (obj) {
+    PyGILState_STATE gs = PyGILState_Ensure();
+    Py_DECREF(obj);
+    PyGILState_Release(gs);
+  }
+}
+#endif
+
+// Helpers: convert between Rml::Variant and Python objects.
 
 static PyObject *variant_to_python(const Rml::Variant &v) {
   switch (v.GetType()) {
@@ -101,7 +109,6 @@ static void python_to_variant(PyObject *obj, Rml::Variant &out) {
       out = Rml::String(s, (size_t)len);
     }
   }
-  // other types produce an empty/unchanged variant
 }
 
 /**
@@ -125,19 +132,22 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
   }
 
   // Normalise setter: treat Py_None the same as nullptr (read-only variable).
-  // This ensures Py_XINCREF/Py_XDECREF below are always symmetric.
   if (setter == Py_None) {
     setter = nullptr;
   }
 
-  // Increment ref-counts so the callables stay alive for the lifetime of the
-  // data model (the lambdas below capture the raw pointers).
   Py_XINCREF(getter);
-  Py_XINCREF(setter);
+  std::shared_ptr<PyObject> getter_ref(getter, py_decref_with_gil);
 
-  Rml::DataGetFunc get_fn = [getter](Rml::Variant &out) {
+  std::shared_ptr<PyObject> setter_ref;
+  if (setter != nullptr) {
+    Py_XINCREF(setter);
+    setter_ref.reset(setter, py_decref_with_gil);
+  }
+
+  Rml::DataGetFunc get_fn = [getter_ref](Rml::Variant &out) {
     PyGILState_STATE gstate = PyGILState_Ensure();
-    PyObject *result = PyObject_CallNoArgs(getter);
+    PyObject *result = PyObject_CallNoArgs(getter_ref.get());
     if (!result) {
       PyErr_Print();
     } else {
@@ -148,11 +158,11 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
   };
 
   Rml::DataSetFunc set_fn;
-  if (setter != nullptr) {
-    set_fn = [setter](const Rml::Variant &v) {
+  if (setter_ref) {
+    set_fn = [setter_ref](const Rml::Variant &v) {
       PyGILState_STATE gstate = PyGILState_Ensure();
       PyObject *arg = variant_to_python(v);
-      PyObject *result = PyObject_CallOneArg(setter, arg);
+      PyObject *result = PyObject_CallOneArg(setter_ref.get(), arg);
       Py_DECREF(arg);
       if (!result) {
         PyErr_Print();
@@ -163,22 +173,124 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
     };
   }
 
-  bool ok = _constructor.BindFunc(name, std::move(get_fn), std::move(set_fn));
+  return _constructor.BindFunc(name, std::move(get_fn), std::move(set_fn));
+}
 
-  // If BindFunc failed the lambdas were not stored; release the refs we took.
-  if (!ok) {
-    Py_XDECREF(getter);
-    Py_XDECREF(setter);
+// PythonListDefinition is a VariableDefinition backed by a Python list getter.
+// Size() calls the getter and caches the resulting Variant list.
+// Child(index) returns a DataVariable pointing into that cache.
+// RmlUi calls Size then iterates Child(0)..Child(n-1) within one update pass,
+// so the cache is always populated before any Child call.
+
+namespace {
+
+struct VariantScalarDefinition final : public Rml::VariableDefinition {
+  VariantScalarDefinition() : VariableDefinition(Rml::DataVariableType::Scalar) {}
+  bool Get(void *ptr, Rml::Variant &out) override {
+    out = *static_cast<const Rml::Variant *>(ptr);
+    return true;
+  }
+  bool Set(void *ptr, const Rml::Variant &v) override {
+    *static_cast<Rml::Variant *>(ptr) = v;
+    return true;
+  }
+};
+
+struct PythonListDefinition final : public Rml::VariableDefinition {
+  std::shared_ptr<PyObject> _getter;
+  VariantScalarDefinition   _scalar;
+  std::vector<Rml::Variant> _cache;
+  Rml::Variant              _size_variant;
+
+  explicit PythonListDefinition(std::shared_ptr<PyObject> getter)
+    : VariableDefinition(Rml::DataVariableType::Array)
+    , _getter(std::move(getter))
+  {}
+
+  // Calls the Python getter, populates _cache, returns list length.
+  int Size(void *) override {
+    _cache.clear();
+
+    PyGILState_STATE gs = PyGILState_Ensure();
+    PyObject *list = PyObject_CallNoArgs(_getter.get());
+    if (!list) {
+      PyErr_Print();
+      PyGILState_Release(gs);
+      return 0;
+    }
+
+    if (!PyList_Check(list) && !PyTuple_Check(list)) {
+      rmlui_cat.error() << "bind_list getter must return a list or tuple\n";
+      Py_DECREF(list);
+      PyGILState_Release(gs);
+      return 0;
+    }
+
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(list);
+    _cache.reserve(n);
+    PyObject **items = PySequence_Fast_ITEMS(list);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+      Rml::Variant v;
+      python_to_variant(items[i], v);
+      _cache.push_back(std::move(v));
+    }
+
+    Py_DECREF(list);
+    PyGILState_Release(gs);
+    return (int)_cache.size();
   }
 
-  return ok;
+  Rml::DataVariable Child(void *, const Rml::DataAddressEntry &addr) override {
+    const int index = addr.index;
+    if (index < 0 || index >= (int)_cache.size()) {
+      if (addr.name == "size") {
+        _size_variant = (int)_cache.size();
+        return Rml::DataVariable(&_scalar, &_size_variant);
+      }
+      rmlui_cat.warning() << "bind_list index " << index << " out of range\n";
+      return Rml::DataVariable();
+    }
+    return Rml::DataVariable(&_scalar, &_cache[index]);
+  }
+};
+
+} // anonymous namespace
+
+/**
+ * Binds a named list variable for use with data-for in RML templates.
+ *
+ * getter() must return a Python list (or tuple) of scalars: bool, int, float,
+ * or str.  After mutating the underlying data, call dirty_variable(name) to
+ * trigger a DOM re-evaluation of data-for expressions that reference it.
+ *
+ * Returns True on success, False if the constructor is invalid.
+ */
+bool RmlDataModel::
+bind_list(const std::string &name, PyObject *getter) {
+  if (!_constructor) {
+    return false;
+  }
+
+  Py_XINCREF(getter);
+  std::shared_ptr<PyObject> getter_ref(getter, py_decref_with_gil);
+
+  // Push the definition into _custom_definitions before calling
+  // BindCustomDataVariable so RmlUi never holds a pointer that isn't owned.
+  auto owned = std::make_unique<PythonListDefinition>(std::move(getter_ref));
+  auto *def = owned.get();
+  _custom_definitions.push_back(std::move(owned));
+
+  if (!_constructor.BindCustomDataVariable(name, Rml::DataVariable(def, nullptr))) {
+    _custom_definitions.pop_back();
+    return false;
+  }
+  return true;
 }
 
 /**
  * Binds a named event callback to a Python callable.
  *
- * callback(handle, event_type, args)  — called when a data-event fires.
- *   Currently called with no arguments (future extension).
+ * callback()  — called with no arguments when the data-event fires.
  *
  * Returns True on success.
  */
@@ -189,10 +301,12 @@ bind_event_callback(const std::string &name, PyObject *callback) {
   }
 
   Py_XINCREF(callback);
+  std::shared_ptr<PyObject> cb_ref(callback, py_decref_with_gil);
 
-  Rml::DataEventFunc fn = [callback](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+  Rml::DataEventFunc fn = [cb_ref](Rml::DataModelHandle, Rml::Event &,
+                                    const Rml::VariantList &) {
     PyGILState_STATE gstate = PyGILState_Ensure();
-    PyObject *result = PyObject_CallNoArgs(callback);
+    PyObject *result = PyObject_CallNoArgs(cb_ref.get());
     if (!result) {
       PyErr_Print();
     } else {
@@ -201,11 +315,7 @@ bind_event_callback(const std::string &name, PyObject *callback) {
     PyGILState_Release(gstate);
   };
 
-  bool ok = _constructor.BindEventCallback(name, std::move(fn));
-  if (!ok) {
-    Py_XDECREF(callback);
-  }
-  return ok;
+  return _constructor.BindEventCallback(name, std::move(fn));
 }
 
 #endif  // HAVE_PYTHON && !CPPPARSER

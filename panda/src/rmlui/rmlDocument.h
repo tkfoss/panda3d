@@ -42,6 +42,24 @@ PUBLISHED:
   void set_title(const std::string &title);
   MAKE_PROPERTY(title, get_title, set_title);
 
+  // C1 — additional metadata
+  std::string get_source_url() const;
+  bool is_modal() const;
+
+  MAKE_PROPERTY(source_url, get_source_url);
+  MAKE_PROPERTY(modal,      is_modal);
+
+  // C2 — z-ordering
+  void pull_to_front();
+  void push_to_back();
+
+  // C3 — style hot-reload
+  void reload_style_sheet();
+
+  // C4 — programmatic element creation
+  PT(RmlElement) create_element(const std::string &tag);
+  PT(RmlElement) create_text_node(const std::string &text);
+
 public:
   RmlDocument() = default;
 #ifndef CPPPARSER

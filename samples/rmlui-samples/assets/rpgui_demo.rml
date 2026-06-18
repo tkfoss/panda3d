@@ -237,5 +237,17 @@
     <div id="stat-output" class="status-box">Interact with the controls above.</div>
 </div>
 
+<!-- ── Draggable Panel ────────────────────────────────────────────── -->
+<div id="drag-panel" class="rpgui-container framed">
+    <h1>Drag me!</h1>
+    <hr />
+    <p>This panel is draggable. Click and drag the title or body to move it.</p>
+    <p style="font-size: 11dp; color: #adf;">
+        CSS: <em>drag: drag</em><br/>
+        Python: <em>dragstart / drag events</em><br/>
+        + <em>get_absolute_offset()</em> + <em>set_property()</em>
+    </p>
+</div>
+
 </body>
 </rml>

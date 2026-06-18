@@ -48,12 +48,25 @@
                 <code>PopLayer</code>) and is rendered via a Panda3D offscreen buffer + GLSL shader.</td></tr>
             <tr><td class="tab-name">Forms</td>
                 <td>All built-in input types. The <strong>Submit</strong> button fires a
-                Panda3D event via <code>RmlElement.add_event_listener()</code>.
+                Python callback via <code>RmlElement.add_event_listener()</code>.
                 See <code>_on_form_submit()</code> in main.py.</td></tr>
             <tr><td class="tab-name">Live / Python</td>
                 <td>Every frame, main.py calls <code>RmlElement.set_inner_rml()</code>
                 and <code>set_attribute("style", …)</code> to push data into the DOM.
                 See <code>_update()</code> in main.py.</td></tr>
+            <tr><td class="tab-name">DOM API</td>
+                <td>Live demo of the Python-side DOM API:
+                geometry queries (<code>get_absolute_offset</code>, <code>offset_width/height</code>),
+                attribute / style / pseudo-class methods,
+                DOM traversal (<code>query_selector</code>, <code>get_child</code>, <code>num_children</code>),
+                programmatic <code>create_element</code> / <code>append_child</code> / <code>remove_child</code>,
+                context queries (<code>is_mouse_interacting</code>, <code>get_hover_element</code>,
+                <code>get_focus_element</code>), and <code>scroll_into_view</code>.</td></tr>
+            <tr><td class="tab-name">Data Binding</td>
+                <td>See <code>03_data_binding.py</code> — <code>bind_func()</code>
+                for scalars (data-if, {{ }} templates), <code>bind_list()</code> for
+                <code>data-for</code> list rendering, and
+                <code>dirty_variable()</code> to trigger re-evaluation.</td></tr>
         </table>
 
         <p class="hint">Press <strong>F1</strong> to open the RmlUi debugger — hover
@@ -330,7 +343,7 @@
 <panel id="forms">
     <h1 class="panel-title">Form Elements</h1>
     <p>All standard input types are built into RmlUi. The <strong>Submit</strong> button
-       fires a Panda3D Messenger event via <code>add_event_listener("submit", …)</code>
+       calls a Python callback via <code>add_event_listener("submit", fn)</code>
        registered in main.py — no scripting plugin required.</p>
 
     <form id="demo-form">
@@ -470,11 +483,11 @@
         </div>
 
         <div class="demo-cell">
-            <h2>Event bridge: DOM → Panda3D Messenger</h2>
+            <h2>Event bridge: DOM → Python callback</h2>
             <p style="font-size: 14dp; color: #b8c8d8;">
                 In main.py:<br/>
-                <code>btn.add_event_listener("click", "rmlui-ping")</code><br/>
-                <code>base.accept("rmlui-ping", handler)</code>
+                <code>btn.add_event_listener("click", self._on_ping)</code><br/>
+                <code>def _on_ping(self, ev): ...</code>
             </p>
             <button id="ping-btn">Ping!</button>
             <p>Pings received: <span id="ping-count" class="live-val">0</span></p>
@@ -491,6 +504,113 @@
                 <div class="toggle-box" id="tog3">D</div>
             </div>
             <p id="toggle-status" style="font-size: 14dp; color: #b8c8d8;">click a square</p>
+        </div>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>DOM API</tab>
+<panel id="domapi">
+    <h1 class="panel-title">Python DOM API</h1>
+    <p>All methods added in this session are exercised live from Python.
+       See <code>_setup_domapi()</code> and <code>_update_domapi()</code> in main.py.</p>
+
+    <div class="demo-row">
+        <!-- Geometry queries -->
+        <div class="demo-cell">
+            <h2>Geometry queries (A1)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>get_relative_offset()</code> <code>get_absolute_offset()</code><br/>
+                <code>offset_width</code> <code>offset_height</code>
+            </p>
+            <div id="geo-target" class="api-box">Measured box</div>
+            <p>Relative: <span id="geo-rel" class="live-val">--</span></p>
+            <p>Absolute: <span id="geo-abs" class="live-val">--</span></p>
+            <p>Size: <span id="geo-size" class="live-val">--</span></p>
+        </div>
+
+        <!-- Attribute / style / pseudo-class -->
+        <div class="demo-cell">
+            <h2>Attributes &amp; Style (A2, A3, A4)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>has_attribute</code> <code>remove_attribute</code><br/>
+                <code>set_property</code> <code>remove_property</code><br/>
+                <code>is_pseudo_class_set</code>
+            </p>
+            <div id="attr-target" class="api-box" data-demo="yes">Hover me</div>
+            <p>has data-demo: <span id="attr-has" class="live-val">--</span></p>
+            <p>:hover active: <span id="attr-hover" class="live-val">--</span></p>
+            <button id="attr-flash-btn">Flash colour</button>
+        </div>
+    </div>
+
+    <div class="demo-row">
+        <!-- DOM traversal -->
+        <div class="demo-cell">
+            <h2>DOM traversal (A6, A7)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>query_selector</code> <code>get_parent_node</code><br/>
+                <code>get_child</code> <code>num_children</code>
+            </p>
+            <div id="traverse-root" class="api-box">
+                <span class="tspan">Child A</span>
+                <span class="tspan">Child B</span>
+                <span class="tspan">Child C</span>
+            </div>
+            <p>Children: <span id="trav-count" class="live-val">--</span></p>
+            <p>query_selector(.tspan): <span id="trav-qs" class="live-val">--</span></p>
+            <p>Parent id: <span id="trav-parent" class="live-val">--</span></p>
+        </div>
+
+        <!-- Create / append / remove -->
+        <div class="demo-cell">
+            <h2>Create &amp; Append (C4, A8)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>create_element</code> <code>create_text_node</code><br/>
+                <code>append_child</code> <code>remove_child</code>
+            </p>
+            <div id="create-container" class="api-box api-box-tall"/>
+            <div class="btn-row">
+                <button id="create-add-btn">Add item</button>
+                <button id="create-remove-btn">Remove last</button>
+            </div>
+            <p>Count: <span id="create-count" class="live-val">0</span></p>
+        </div>
+    </div>
+
+    <div class="demo-row">
+        <!-- Context queries -->
+        <div class="demo-cell">
+            <h2>Context queries (B1, B2)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>is_mouse_interacting()</code><br/>
+                <code>get_hover_element()</code> <code>get_focus_element()</code><br/>
+                <code>get_element_at_point()</code>
+            </p>
+            <p>Mouse interacting: <span id="ctx-interacting" class="live-val">--</span></p>
+            <p>Hover element id: <span id="ctx-hover" class="live-val">--</span></p>
+            <p>Focus element id: <span id="ctx-focus" class="live-val">--</span></p>
+            <input type="text" id="ctx-focus-input" placeholder="Click to focus…" class="ctx-input"/>
+        </div>
+
+        <!-- Scroll + load_from_memory -->
+        <div class="demo-cell">
+            <h2>Scroll &amp; load_from_memory (A5, B3)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>scroll_into_view()</code><br/>
+                <code>load_document_from_memory()</code><br/>
+                <code>get_num_documents()</code>
+            </p>
+            <div id="scroll-box" class="scroll-demo">
+                <p id="scroll-top">TOP — scroll target is below ↓</p>
+                <div style="height: 200dp;"/>
+                <p id="scroll-target" class="scroll-target">↑ Scroll target ↑</p>
+            </div>
+            <div class="btn-row">
+                <button id="scroll-to-btn">Scroll to target</button>
+                <button id="scroll-top-btn">Scroll to top</button>
+            </div>
+            <p>Docs loaded: <span id="ctx-numdocs" class="live-val">--</span> <span style="font-size:13dp; color:#888;">(incl. debugger)</span></p>
         </div>
     </div>
 </panel>

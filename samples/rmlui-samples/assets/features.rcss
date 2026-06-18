@@ -599,3 +599,81 @@ textarea    { display: block; margin: 5dp 0; width: 92%; }
     background-color: rgba(60,180,90,0.75);
     border-color: #4f8;
 }
+
+/* ── DOM API tab ──────────────────────────────────────────────────── */
+
+.api-box {
+    display: block;
+    background-color: rgba(20,40,80,0.6);
+    border-width: 1dp;
+    border-color: rgba(100,160,255,0.3);
+    border-radius: 4dp;
+    padding: 10dp 14dp;
+    margin: 8dp 0;
+    font-size: 14dp;
+    color: #c8daf0;
+}
+
+.api-box-tall {
+    min-height: 80dp;
+    overflow: hidden auto;
+}
+
+.api-flash {
+    background-color: rgba(255,200,50,0.25);
+    border-color: #fc2;
+}
+
+.tspan {
+    display: inline-block;
+    background-color: rgba(60,100,180,0.5);
+    border-width: 1dp;
+    border-color: rgba(100,160,255,0.3);
+    border-radius: 3dp;
+    padding: 3dp 8dp;
+    margin-right: 6dp;
+    font-size: 13dp;
+}
+
+.api-item {
+    display: block;
+    padding: 5dp 10dp;
+    margin: 3dp 0;
+    background-color: rgba(60,100,180,0.4);
+    border-width: 1dp;
+    border-color: rgba(100,160,255,0.25);
+    border-radius: 3dp;
+    font-size: 14dp;
+    color: #c8daf0;
+}
+
+.btn-row {
+    display: block;
+    margin: 8dp 0;
+}
+
+.btn-row button { margin-right: 6dp; }
+
+.ctx-input {
+    display: block;
+    width: 90%;
+    margin: 8dp 0;
+}
+
+.scroll-demo {
+    display: block;
+    height: 100dp;
+    overflow: hidden auto;
+    background-color: rgba(10,20,45,0.7);
+    border-width: 1dp;
+    border-color: rgba(100,160,255,0.2);
+    border-radius: 4dp;
+    padding: 8dp 12dp;
+    margin: 8dp 0;
+    font-size: 13dp;
+}
+
+.scroll-target {
+    color: #fc2;
+    font-weight: bold;
+}

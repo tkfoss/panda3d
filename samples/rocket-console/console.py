@@ -20,7 +20,7 @@ class Console(object):
 
         self._lines = []
 
-        el = self.document.getElementById('content')
+        el = self.document.get_element_by_id('content')
         self.textEl = el
 
         self.allowEditing(True)
@@ -61,7 +61,7 @@ class Console(object):
         if self.editMode:
             newText = self.consolePrompt + self.input
             parts.append(html.escape(newText) + (self.blinkState and '_' or ''))
-        self.textEl.setInnerRml("\n".join(parts))
+        self.textEl.set_inner_rml("\n".join(parts))
 
     def scroll(self):
         self.blinkState = False

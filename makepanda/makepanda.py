@@ -857,7 +857,7 @@ if (COMPILER=="GCC"):
     SmartPkgEnable("SQUISH",    "",          ("squish"), "squish.h")
     SmartPkgEnable("TIFF",      "libtiff-4", ("tiff"), "tiff.h")
     SmartPkgEnable("VRPN",      "",          ("vrpn", "quat"), ("vrpn", "quat.h", "vrpn/vrpn_Types.h"))
-    SmartPkgEnable("RMLUI",     "",          ("RmlCore",), ("RmlUi/Core/Core.h",))
+    SmartPkgEnable("RMLUI",     "",          ("rmlui_core", "RmlUiCore", "rmlui"), ("RmlUi/Core/Core.h",))
     SmartPkgEnable("OPUS",      "opusfile",  ("opusfile", "opus", "ogg"), ("ogg/ogg.h", "opus/opusfile.h", "opus"))
     SmartPkgEnable("JPEG",      "",          ("jpeg"), "jpeglib.h")
     SmartPkgEnable("MIMALLOC",  "",          ("mimalloc"), "mimalloc.h")
@@ -4299,7 +4299,7 @@ if not PkgSkip("RMLUI"):
     IGATEFILES=GetDirectoryContents('panda/src/rmlui', ["rmlInputHandler.h",
         "rmlInputHandler.cxx", "rmlRegion.h", "rmlRegion.cxx",
         "rmlContext.h", "rmlContext.cxx", "rmlDocument.h", "rmlDocument.cxx",
-        "rmlElement.h", "rmlElement.cxx"])
+        "rmlElement.h", "rmlElement.cxx", "rmlDataModel.h", "rmlDataModel.cxx"])
     TargetAdd('libp3rmlui.in', opts=OPTS, input=IGATEFILES)
     TargetAdd('libp3rmlui.in', opts=['IMOD:panda3d.rmlui', 'ILIB:libp3rmlui', 'SRCDIR:panda/src/rmlui'])
 
