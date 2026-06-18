@@ -107,7 +107,6 @@ public:
   // _owned is not copyable; a copied wrapper is a non-owning alias of the same element.
   RmlElement(const RmlElement &other) : _el(nullptr) {}
   RmlElement &operator=(const RmlElement &) = delete;
-  Rml::Element *get_raw() const { return _el; }
 
   ~RmlElement();
 

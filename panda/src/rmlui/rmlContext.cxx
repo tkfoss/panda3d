@@ -55,19 +55,6 @@ update() {
 }
 
 /**
- * Renders the RmlUi context.  Only call this manually when not using
- * RmlRegion and you have set up a custom Rml::RenderInterface that does
- * not require an active CullTraverser.  Calling this while a RmlRegion
- * owns the context will crash because the render interface expects a live
- * CullTraverser (set during RmlRegion::do_cull).
- */
-void RmlContext::
-render() {
-  nassertv(_ctx != nullptr);
-  _ctx->Render();
-}
-
-/**
  * Returns the width of the context in pixels.
  */
 int RmlContext::

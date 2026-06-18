@@ -39,7 +39,6 @@ PUBLISHED:
   bool load_font_face(const std::string &path, bool fallback = false);
 
   void update();
-  void render();
 
   int get_width() const;
   int get_height() const;
@@ -81,10 +80,6 @@ public:
   RmlContext() = default;
 #ifndef CPPPARSER
   explicit RmlContext(Rml::Context *ctx) : _ctx(ctx) {}
-
-  // Returns the underlying Rml::Context pointer.  The pointer is non-owning;
-  // it must not be used after the owning RmlRegion has been destroyed.
-  Rml::Context *get_raw() const { return _ctx; }
 
 private:
   friend class RmlRegion;
