@@ -1,0 +1,125 @@
+<rml>
+<head>
+	<title>Chess — Profile</title>
+	<link type="text/rcss" href="chess.rcss"/>
+	<style>
+		.profile-head { display: flex; flex-direction: row; align-items: center; margin-bottom: 22dp; }
+		.profile-head .avatar
+		{
+			display: block;
+			flex: 0 0 84dp;
+			width: 84dp; height: 84dp; border-radius: 22dp; margin-right: 20dp;
+			background-color: #2f7a8f;
+			decorator: linear-gradient(135deg, #5de4c7, #7a5cff);
+			text-align: center; font-size: 48dp; line-height: 84dp; color: #07121a;
+		}
+		.profile-head .pname { font-size: 28dp; font-weight: bold; color: #ffffff; }
+		.profile-head .pmeta { color: #8c94ad; font-size: 14dp; margin-top: 2dp; }
+
+		.profile-layout { display: flex; flex-direction: row; flex: 1 1 auto; }
+		.profile-main { flex: 1 1 auto; margin-right: 26dp; display: flex; flex-direction: column; }
+		.profile-side { flex: 0 0 320dp; display: flex; flex-direction: column; }
+
+		.rating-cards { display: flex; flex-direction: row; }
+		.rating-cards .rcard
+		{
+			flex: 1 1 auto; margin-right: 14dp; padding: 18dp;
+			border-radius: 14dp; background-color: #161d3acc; border: 1dp #ffffff12;
+		}
+		.rating-cards .rcard:last-child { margin-right: 0; }
+		.rating-cards .rcard .cat { color: #8c94ad; font-size: 13dp; letter-spacing: 1dp; text-transform: uppercase; }
+		.rating-cards .rcard .val { font-size: 30dp; font-weight: bold; color: #ffffff; margin-top: 4dp; }
+		.rating-cards .rcard .delta-up { color: #5de4c7; font-size: 13dp; }
+		.rating-cards .rcard .delta-down { color: #ff7a8a; font-size: 13dp; }
+
+		.history { flex: 1 1 auto; overflow-y: auto; margin-top: 6dp; }
+		.hrow { display: flex; flex-direction: row; align-items: center; padding: 11dp 12dp; border-radius: 8dp; }
+		.hrow:nth-child(even) { background-color: #ffffff08; }
+		.hrow:hover { background-color: #ffffff12; }
+		.hrow .res { width: 26dp; height: 26dp; border-radius: 7dp; text-align: center; line-height: 26dp; font-weight: bold; font-size: 13dp; margin-right: 14dp; }
+		.hrow .res.win { background-color: #5de4c733; color: #5de4c7; }
+		.hrow .res.loss { background-color: #ff7a8a33; color: #ff7a8a; }
+		.hrow .res.draw { background-color: #ffffff1a; color: #c7cde0; }
+		.hrow .opp { flex: 1 1 auto; color: #e8ebf2; }
+		.hrow .mode { flex: 0 0 90dp; color: #8c94ad; font-size: 13dp; }
+		.hrow .when { flex: 0 0 90dp; color: #6f7798; font-size: 13dp; text-align: right; }
+
+		/* Win-rate readout: a big percentage plus a segmented bar (conic-gradient
+		   donuts don't render in this backend, so we use solid bar segments). */
+		.winrate { display: flex; flex-direction: row; align-items: center; margin: 8dp 0 14dp 0; }
+		.winrate .pct { font-size: 42dp; font-weight: bold; color: #ffffff; }
+		.winrate .lbl { font-size: 13dp; color: #8c94ad; margin-left: 10dp; }
+		.wdl-bar { display: flex; flex-direction: row; height: 14dp; border-radius: 7dp; margin-bottom: 16dp; }
+		.wdl-bar .seg { height: 14dp; }
+		.wdl-bar .seg:first-child { border-top-left-radius: 7dp; border-bottom-left-radius: 7dp; }
+		.wdl-bar .seg:last-child { border-top-right-radius: 7dp; border-bottom-right-radius: 7dp; }
+		.legend-row { display: flex; flex-direction: row; padding: 4dp 0; }
+		.legend-row .dot { width: 12dp; height: 12dp; border-radius: 6dp; margin-right: 8dp; vertical-align: -1dp; display: inline-block; }
+	</style>
+</head>
+
+<body class="screen">
+	<div class="topbar">
+		<button class="btn-ghost" id="nav_profile_1">‹ Menu</button>
+		<div class="col" style="margin-left: 18dp;">
+			<span class="brand"><span class="accent">◆</span> PROFILE</span>
+			<span class="subtitle">Ratings, history and stats</span>
+		</div>
+		<div class="spacer"/>
+		<button class="btn-primary" id="nav_profile_2">▶ New game</button>
+	</div>
+
+	<div class="profile-head">
+		<span class="avatar">♚</span>
+		<div class="col">
+			<span class="pname">GrandMaster_Tom</span>
+			<span class="pmeta">Member since 2024 · 312 games · ★ 5-game win streak</span>
+		</div>
+	</div>
+
+	<div class="profile-layout">
+		<div class="profile-main">
+			<div class="rating-cards">
+				<div class="rcard"><div class="cat">Bullet</div><div class="val">1654</div><div class="delta-up">▲ 12</div></div>
+				<div class="rcard"><div class="cat">Blitz</div><div class="val">1781</div><div class="delta-down">▼ 8</div></div>
+				<div class="rcard"><div class="cat">Rapid</div><div class="val">1842</div><div class="delta-up">▲ 21</div></div>
+				<div class="rcard"><div class="cat">Puzzles</div><div class="val">1583</div><div class="delta-up">▲ 24</div></div>
+			</div>
+
+			<div class="glass" style="flex: 1 1 auto; margin-top: 20dp; display: flex; flex-direction: column;">
+				<div class="panel-title">Recent games</div>
+				<div class="history">
+					<div class="hrow"><span class="res win">W</span><span class="opp">vs Stockfish · Lvl 4</span><span class="mode">Rapid 10+5</span><span class="when">2m ago</span></div>
+					<div class="hrow"><span class="res loss">L</span><span class="opp">vs Magnus_Bot</span><span class="mode">Blitz 5+3</span><span class="when">1h ago</span></div>
+					<div class="hrow"><span class="res win">W</span><span class="opp">vs Alex_94</span><span class="mode">Rapid 15+10</span><span class="when">3h ago</span></div>
+					<div class="hrow"><span class="res draw">½</span><span class="opp">vs Stockfish · Lvl 6</span><span class="mode">Classical</span><span class="when">Yesterday</span></div>
+					<div class="hrow"><span class="res win">W</span><span class="opp">vs Nina_K</span><span class="mode">Blitz 3+2</span><span class="when">Yesterday</span></div>
+					<div class="hrow"><span class="res win">W</span><span class="opp">vs Stockfish · Lvl 3</span><span class="mode">Bullet 1+0</span><span class="when">2d ago</span></div>
+					<div class="hrow"><span class="res loss">L</span><span class="opp">vs ProChess77</span><span class="mode">Rapid 10+0</span><span class="when">2d ago</span></div>
+					<div class="hrow"><span class="res win">W</span><span class="opp">vs Sam_T</span><span class="mode">Blitz 5+0</span><span class="when">3d ago</span></div>
+				</div>
+			</div>
+		</div>
+
+		<div class="profile-side glass">
+			<div class="panel-title">Win / draw / loss</div>
+			<div class="winrate"><span class="pct">68%</span><span class="lbl">win rate<br/>over 312 games</span></div>
+			<div class="wdl-bar">
+				<div class="seg" style="background-color: #5de4c7; width: 68%;"/>
+				<div class="seg" style="background-color: #c7cde0; width: 12%;"/>
+				<div class="seg" style="background-color: #2a335c; width: 20%;"/>
+			</div>
+			<div class="legend-row"><span class="dot" style="background-color: #5de4c7;"/><span style="flex:1 1 auto;">Wins</span><span class="accent-text">212</span></div>
+			<div class="legend-row"><span class="dot" style="background-color: #c7cde0;"/><span style="flex:1 1 auto;">Draws</span><span class="muted">38</span></div>
+			<div class="legend-row"><span class="dot" style="background-color: #2a335c;"/><span style="flex:1 1 auto;">Losses</span><span class="muted">62</span></div>
+
+			<div class="panel-title" style="margin-top: 20dp;">Favourite opening</div>
+			<p style="margin-bottom: 4dp;">Ruy López</p>
+			<p class="muted" style="font-size: 13dp;">Played in 41 games · 71% score</p>
+
+			<div class="spacer"/>
+			<button class="btn-ghost" style="width: 100%;" id="nav_profile_3">⚙ Account settings</button>
+		</div>
+	</div>
+</body>
+</rml>

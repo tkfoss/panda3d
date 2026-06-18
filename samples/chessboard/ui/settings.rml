@@ -1,0 +1,273 @@
+<rml>
+<head>
+	<title>Chess — Settings</title>
+	<link type="text/rcss" href="chess.rcss"/>
+	<style>
+		.settings-layout { display: flex; flex-direction: row; flex: 1 1 auto; }
+		.settings-nav { flex: 0 0 220dp; margin-right: 26dp; }
+		.settings-nav .navitem
+		{
+			display: block; padding: 12dp 16dp; border-radius: 10dp;
+			color: #c7cde0; cursor: pointer; margin-bottom: 6dp;
+		}
+		.settings-nav .navitem .ico { display: inline-block; width: 22dp; color: #5de4c7; }
+		.settings-nav .navitem:hover { background-color: #ffffff10; }
+		.settings-nav .navitem.active { background-color: #5de4c71f; color: #ffffff; border: 1dp #5de4c755; }
+		.settings-content { flex: 1 1 auto; overflow-y: auto; }
+
+		.setting-row
+		{
+			display: flex; flex-direction: row; align-items: center;
+			padding: 16dp 0; border-bottom: 1dp #ffffff0e;
+		}
+		.setting-row .label-col { flex: 1 1 auto; display: flex; flex-direction: column; }
+		.setting-row .label-col .name { display: block; font-size: 16dp; color: #ffffff; }
+		.setting-row .label-col .desc { display: block; font-size: 13dp; color: #8c94ad; margin-top: 2dp; }
+		.setting-row .control-col { flex: 0 0 auto; }
+
+		/* Theme swatches */
+		.swatches { display: flex; flex-direction: row; }
+		.swatch-opt
+		{
+			width: 56dp; height: 40dp; border-radius: 8dp; margin-left: 10dp;
+			border: 2dp #ffffff14; cursor: pointer;
+		}
+		.swatch-opt.active { border-color: #5de4c7; }
+		.swatch-classic { decorator: horizontal-gradient(#ecd9b0 #b58863); }
+		.swatch-blue { decorator: horizontal-gradient(#dee3e6 #4a6fa5); }
+		.swatch-neon { decorator: horizontal-gradient(#5de4c7 #7a5cff); }
+		.swatch-wood { decorator: horizontal-gradient(#d9b382 #6f4a2b); }
+
+		.key-cap
+		{
+			display: inline-block; padding: 5dp 12dp; border-radius: 8dp;
+			background-color: #0e1430; border: 1dp #ffffff26;
+			color: #e8ebf2; font-size: 14dp;
+		}
+		.tab-panel { display: block; }
+		.tab-panel.hidden { display: none; }
+	</style>
+</head>
+
+<body class="screen">
+	<div class="topbar">
+		<button class="btn-ghost" id="nav_settings_1">‹ Back</button>
+		<div class="col" style="margin-left: 18dp;">
+			<span class="brand"><span class="accent">◆</span> SETTINGS</span>
+			<span class="subtitle">Personalize your board and gameplay</span>
+		</div>
+		<div class="spacer"/>
+		<button class="btn-primary" id="nav_settings_2">Save &amp; close</button>
+	</div>
+
+	<div class="settings-layout">
+		<div class="settings-nav glass" style="padding: 16dp;">
+			<span class="navitem active" id="tab_board" data-panel="board"><span class="ico">◧</span> Board &amp; Theme</span>
+			<span class="navitem" id="tab_pieces" data-panel="pieces"><span class="ico">♟</span> Pieces</span>
+			<span class="navitem" id="tab_sound" data-panel="sound"><span class="ico">♪</span> Sound</span>
+			<span class="navitem" id="tab_gameplay" data-panel="gameplay"><span class="ico">▷</span> Gameplay</span>
+			<span class="navitem" id="tab_graphics" data-panel="graphics"><span class="ico">◈</span> 3D &amp; Graphics</span>
+			<span class="navitem" id="tab_controls" data-panel="controls"><span class="ico">⌘</span> Controls</span>
+		</div>
+
+		<div class="settings-content glass">
+			<!-- Board & Theme -->
+			<div class="tab-panel" id="panel_board">
+				<h2>Board &amp; Theme</h2>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Board theme</div>
+						<div class="desc">Color palette used for the squares.</div>
+					</div>
+					<div class="control-col swatches">
+						<div class="swatch-opt swatch-classic"/>
+						<div class="swatch-opt swatch-wood"/>
+						<div class="swatch-opt swatch-blue active"/>
+						<div class="swatch-opt swatch-neon"/>
+					</div>
+				</div>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Board coordinates</div>
+						<div class="desc">Display file/rank labels around the board.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle" checked="checked"/></div>
+				</div>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Highlight last move</div>
+						<div class="desc">Tint the from/to squares of the last move played.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle" checked="checked"/></div>
+				</div>
+				<div class="setting-row" style="border-bottom: 0;">
+					<div class="label-col">
+						<div class="name">Show legal moves</div>
+						<div class="desc">Mark squares a selected piece can move to.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle" checked="checked"/></div>
+				</div>
+			</div>
+
+			<!-- Pieces -->
+			<div class="tab-panel hidden" id="panel_pieces">
+				<h2>Pieces</h2>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Piece set</div>
+						<div class="desc">Visual style of the 3D pieces.</div>
+					</div>
+					<div class="control-col">
+						<select name="pieces">
+							<option value="modern" selected>Modern (default)</option>
+							<option value="staunton">Staunton classic</option>
+							<option value="lowpoly">Low-poly</option>
+							<option value="glass">Glass</option>
+						</select>
+					</div>
+				</div>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Piece animation speed</div>
+						<div class="desc">How quickly pieces glide between squares.</div>
+					</div>
+					<div class="control-col row center-x">
+						<input class="range" type="range" min="0" max="100" step="1" value="70"/>
+					</div>
+				</div>
+				<div class="setting-row" style="border-bottom: 0;">
+					<div class="label-col">
+						<div class="name">Promote to queen automatically</div>
+						<div class="desc">Skip the promotion picker and always queen.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle"/></div>
+				</div>
+			</div>
+
+			<!-- Sound -->
+			<div class="tab-panel hidden" id="panel_sound">
+				<h2>Sound</h2>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Master volume</div>
+						<div class="desc">Overall sound level.</div>
+					</div>
+					<div class="control-col row center-x">
+						<input class="range" type="range" min="0" max="100" step="1" value="80"/>
+					</div>
+				</div>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Move &amp; capture sounds</div>
+						<div class="desc">Play a sound on each move and capture.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle" checked="checked"/></div>
+				</div>
+				<div class="setting-row" style="border-bottom: 0;">
+					<div class="label-col">
+						<div class="name">Low-time warning</div>
+						<div class="desc">Beep when your clock drops under 10 seconds.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle" checked="checked"/></div>
+				</div>
+			</div>
+
+			<!-- Gameplay -->
+			<div class="tab-panel hidden" id="panel_gameplay">
+				<h2>Gameplay</h2>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Confirm resign / draw</div>
+						<div class="desc">Ask before resigning or offering a draw.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle" checked="checked"/></div>
+				</div>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Auto-promote queen</div>
+						<div class="desc">Promote pawns to a queen without prompting.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle"/></div>
+				</div>
+				<div class="setting-row" style="border-bottom: 0;">
+					<div class="label-col">
+						<div class="name">Move input</div>
+						<div class="desc">How pieces are moved on the board.</div>
+					</div>
+					<div class="control-col">
+						<select name="moveinput">
+							<option value="both" selected>Click or drag</option>
+							<option value="drag">Drag only</option>
+							<option value="click">Click two squares</option>
+						</select>
+					</div>
+				</div>
+			</div>
+
+			<!-- 3D & Graphics -->
+			<div class="tab-panel hidden" id="panel_graphics">
+				<h2>3D &amp; Graphics</h2>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Camera</div>
+						<div class="desc">Default viewpoint for the 3D board.</div>
+					</div>
+					<div class="control-col">
+						<select name="camera">
+							<option value="angled" selected>Angled (3D)</option>
+							<option value="top">Top-down (2D)</option>
+							<option value="cinematic">Cinematic</option>
+						</select>
+					</div>
+				</div>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Shadows</div>
+						<div class="desc">Render piece and board shadows.</div>
+					</div>
+					<div class="control-col"><input type="checkbox" class="toggle" checked="checked"/></div>
+				</div>
+				<div class="setting-row" style="border-bottom: 0;">
+					<div class="label-col">
+						<div class="name">Quality preset</div>
+						<div class="desc">Trade visual fidelity for performance.</div>
+					</div>
+					<div class="control-col">
+						<select name="quality">
+							<option value="high" selected>High</option>
+							<option value="medium">Medium</option>
+							<option value="low">Low</option>
+						</select>
+					</div>
+				</div>
+			</div>
+
+			<!-- Controls -->
+			<div class="tab-panel hidden" id="panel_controls">
+				<h2>Controls</h2>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Toggle UI debugger</div>
+						<div class="desc">Open the RmlUi debugger overlay.</div>
+					</div>
+					<div class="control-col"><span class="key-cap">F1</span> <span class="muted">or</span> <span class="key-cap">`</span></div>
+				</div>
+				<div class="setting-row">
+					<div class="label-col">
+						<div class="name">Back to menu</div>
+						<div class="desc">Leave the current screen.</div>
+					</div>
+					<div class="control-col"><span class="key-cap">Esc</span></div>
+				</div>
+				<div class="setting-row" style="border-bottom: 0;">
+					<div class="label-col">
+						<div class="name">Pick / drag a piece</div>
+						<div class="desc">Move pieces on the live 3D board.</div>
+					</div>
+					<div class="control-col"><span class="key-cap">Left&nbsp;mouse</span></div>
+				</div>
+			</div>
+		</div>
+	</div>
+</body>
+</rml>

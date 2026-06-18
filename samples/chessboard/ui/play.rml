@@ -1,0 +1,93 @@
+<rml>
+<head>
+	<title>Chess — Create a Game</title>
+	<link type="text/rcss" href="chess.rcss"/>
+	<style>
+		.setup-layout { display: flex; flex-direction: row; flex: 1 1 auto; }
+		.setup-main { flex: 1 1 auto; margin-right: 30dp; }
+		.setup-side { flex: 0 0 380dp; display: flex; flex-direction: column; }
+		.section { margin-bottom: 26dp; }
+		.pill-grid { display: flex; flex-direction: row; flex-wrap: wrap; }
+		.pill-grid .pill { flex: 0 0 130dp; }
+		.mode-row { display: flex; flex-direction: row; }
+		.mode-row .pill { flex: 1 1 auto; }
+		.color-row { display: flex; flex-direction: row; }
+		.color-row .pill { flex: 1 1 auto; }
+		.color-row .pill .swatch { font-size: 30dp; display: block; }
+		.summary-line { display: flex; flex-direction: row; padding: 8dp 0; border-bottom: 1dp #ffffff10; }
+		.summary-line .k { flex: 1 1 auto; color: #8c94ad; }
+		.summary-line .v { color: #ffffff; font-weight: bold; }
+		.level-value { color: #5de4c7; font-weight: bold; }
+	</style>
+</head>
+
+<body class="screen">
+	<div class="topbar">
+		<button class="btn-ghost" id="nav_play_1">‹ Back</button>
+		<div class="col" style="margin-left: 18dp;">
+			<span class="brand"><span class="accent">◆</span> CREATE A GAME</span>
+			<span class="subtitle">Choose your time control, side and opponent</span>
+		</div>
+	</div>
+
+	<div class="setup-layout">
+		<div class="setup-main glass">
+			<div class="section">
+				<div class="panel-title">Opponent</div>
+				<div class="mode-row">
+					<div class="pill selected"><span class="big">♟</span><span class="small">Play vs AI</span></div>
+					<div class="pill"><span class="big">⚇</span><span class="small">Local 2-player</span></div>
+					<div class="pill"><span class="big">◍</span><span class="small">Online (soon)</span></div>
+				</div>
+			</div>
+
+			<div class="section">
+				<div class="panel-title">Time control</div>
+				<div class="pill-grid">
+					<div class="pill"><span class="big">1+0</span><span class="small">Bullet</span></div>
+					<div class="pill"><span class="big">3+2</span><span class="small">Blitz</span></div>
+					<div class="pill selected"><span class="big">5+3</span><span class="small">Blitz</span></div>
+					<div class="pill"><span class="big">10+5</span><span class="small">Rapid</span></div>
+					<div class="pill"><span class="big">15+10</span><span class="small">Rapid</span></div>
+					<div class="pill"><span class="big">30+0</span><span class="small">Classical</span></div>
+					<div class="pill"><span class="big">∞</span><span class="small">Unlimited</span></div>
+					<div class="pill"><span class="big">⚙</span><span class="small">Custom</span></div>
+				</div>
+			</div>
+
+			<div class="section">
+				<div class="panel-title">Play as</div>
+				<div class="color-row">
+					<div class="pill"><span class="swatch">♔</span><span class="small">White</span></div>
+					<div class="pill selected"><span class="swatch">⬗</span><span class="small">Random</span></div>
+					<div class="pill"><span class="swatch">♚</span><span class="small">Black</span></div>
+				</div>
+			</div>
+
+			<div class="section" style="margin-bottom: 0;">
+				<div class="panel-title">AI difficulty</div>
+				<div class="row center-x">
+					<input class="range" type="range" name="level" min="1" max="8" step="1" value="4"/>
+					<span style="margin-left: 16dp;">Level <span class="level-value">4</span> · <span class="muted">~1600 Elo</span></span>
+				</div>
+			</div>
+		</div>
+
+		<div class="setup-side">
+			<div class="glass" style="margin-bottom: 22dp;">
+				<div class="panel-title">Game summary</div>
+				<div class="summary-line"><span class="k">Opponent</span><span class="v">AI · Level 4</span></div>
+				<div class="summary-line"><span class="k">Time</span><span class="v">5 + 3 Blitz</span></div>
+				<div class="summary-line"><span class="k">Color</span><span class="v">Random</span></div>
+				<div class="summary-line" style="border-bottom: 0;"><span class="k">Rated</span><span class="v">Casual</span></div>
+			</div>
+
+			<button class="btn-primary" style="width: 100%; padding: 18dp; font-size: 19dp;" id="nav_play_2">▶  Start game</button>
+			<button class="btn-ghost" style="width: 100%; margin-top: 12dp;" id="nav_play_3">Cancel</button>
+
+			<div class="spacer"/>
+			<div class="glass-soft card-hint">Tip: in the full game this launches the 3D board with your selected settings.</div>
+		</div>
+	</div>
+</body>
+</rml>

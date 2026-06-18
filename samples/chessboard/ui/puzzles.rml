@@ -1,0 +1,90 @@
+<rml>
+<head>
+	<title>Chess — Puzzles</title>
+	<link type="text/rcss" href="chess.rcss"/>
+	<style>
+		.puzzle-layout { display: flex; flex-direction: row; flex: 1 1 auto; }
+		.puzzle-board-col { flex: 1 1 auto; margin-right: 26dp; display: flex; flex-direction: column; }
+		.puzzle-board
+		{
+			flex: 1 1 auto;
+			border-radius: 18dp; border: 1dp #ffffff14;
+			background-color: #0b1026aa;
+			decorator: radial-gradient(circle farthest-side at 50% 45%, #1b234dff, #0b1026ff);
+			display: flex; flex-direction: column; justify-content: center; align-items: center;
+		}
+		.puzzle-board .icon { font-size: 120dp; color: #ffffff; font-effect: glow(18dp #5de4c755); }
+		.puzzle-board .label { color: #9aa2c0; font-size: 15dp; margin-top: 6dp; }
+		.puzzle-side { flex: 0 0 360dp; display: flex; flex-direction: column; }
+
+		.turn-badge
+		{
+			display: inline-block; padding: 8dp 16dp; border-radius: 20dp;
+			background-color: #5de4c71f; border: 1dp #5de4c755; color: #5de4c7;
+			font-weight: bold; margin-bottom: 14dp;
+		}
+		.rating-box { display: flex; flex-direction: row; margin: 8dp 0 20dp 0; }
+		.rating-box .cell { flex: 1 1 auto; text-align: center; }
+		.theme-tags { display: flex; flex-direction: row; flex-wrap: wrap; margin-top: 6dp; }
+		.theme-tags .tag
+		{
+			padding: 5dp 12dp; border-radius: 16dp; margin: 0 8dp 8dp 0;
+			background-color: #ffffff10; color: #c7cde0; font-size: 13dp;
+		}
+		.progress-track { height: 8dp; border-radius: 6dp; background-color: #0e1430; margin: 4dp 0 18dp 0; }
+		.progress-fill { height: 8dp; width: 60%; border-radius: 6dp; decorator: linear-gradient(90deg, #5de4c7, #7a5cff); }
+	</style>
+</head>
+
+<body class="screen">
+	<div class="topbar">
+		<button class="btn-ghost" id="nav_puzzles_1">‹ Menu</button>
+		<div class="col" style="margin-left: 18dp;">
+			<span class="brand"><span class="accent">◆</span> PUZZLES</span>
+			<span class="subtitle">Find the best move</span>
+		</div>
+		<div class="spacer"/>
+		<button class="btn-ghost" id="nav_puzzles_2">▲ Puzzle stats</button>
+	</div>
+
+	<div class="puzzle-layout">
+		<div class="puzzle-board-col">
+			<div class="puzzle-board">
+				<span class="icon">♕</span>
+				<span class="label">Puzzle position renders on the 3D board here</span>
+			</div>
+		</div>
+
+		<div class="puzzle-side glass">
+			<span class="turn-badge">⬤ White to move</span>
+			<h2>Mate in 2</h2>
+			<p class="muted">White has a forcing sequence. Find the key move that leads to checkmate.</p>
+
+			<div class="panel-title" style="margin-top: 10dp;">Puzzle rating</div>
+			<div class="rating-box">
+				<div class="cell"><div class="big-number">1720</div><div class="muted">Puzzle</div></div>
+				<div class="cell"><div class="big-number accent-text">1583</div><div class="muted">Your rating</div></div>
+			</div>
+
+			<div class="panel-title">Themes</div>
+			<div class="theme-tags">
+				<span class="tag">Mate in 2</span>
+				<span class="tag">Pin</span>
+				<span class="tag">Middlegame</span>
+				<span class="tag">Short</span>
+			</div>
+
+			<div class="panel-title" style="margin-top: 16dp;">Session</div>
+			<div class="row"><span class="muted" style="flex:1 1 auto;">Solved 6 / 10</span><span class="accent-text">+24 today</span></div>
+			<div class="progress-track"><div class="progress-fill"/></div>
+
+			<div class="spacer"/>
+			<div class="btn-row">
+				<button class="btn-ghost" style="flex:1 1 auto;">☼ Hint</button>
+				<button class="btn-ghost" style="flex:1 1 auto;">↺ Retry</button>
+			</div>
+			<button class="btn-primary" style="width:100%; margin-top: 12dp; padding: 16dp;">Next puzzle  ›</button>
+		</div>
+	</div>
+</body>
+</rml>

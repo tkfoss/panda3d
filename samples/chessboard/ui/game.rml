@@ -1,0 +1,148 @@
+<rml>
+<head>
+	<title>Chess — Game HUD</title>
+	<link type="text/rcss" href="chess.rcss"/>
+	<style>
+		/* This document is a HUD overlaid on the live 3D board, so the body itself is
+		   transparent — the board shows through, and clicks in empty areas fall
+		   through to the 3D scene for piece picking. */
+		body
+		{
+			background-color: transparent;
+			decorator: none;
+		}
+
+		/* Top bar pinned across the top. */
+		.hud-top
+		{
+			position: absolute; top: 24dp; left: 32dp; right: 32dp;
+			display: flex; flex-direction: row; align-items: center;
+		}
+
+		/* Left column with the two player cards + clocks. */
+		.hud-left
+		{
+			position: absolute; left: 32dp; top: 96dp; width: 300dp;
+			display: flex; flex-direction: column;
+		}
+
+		.player-card
+		{
+			display: flex; flex-direction: row; align-items: center;
+			padding: 12dp 16dp; border-radius: 14dp;
+			background-color: #161d3aee; border: 1dp #ffffff14;
+			margin-bottom: 12dp;
+		}
+		.player-card .avatar
+		{
+			width: 40dp; height: 40dp; border-radius: 12dp;
+			background-color: #232c52; margin-right: 12dp;
+			display: block; text-align: center; font-size: 24dp; line-height: 40dp;
+		}
+		.player-card .pname { font-size: 16dp; font-weight: bold; color: #ffffff; }
+		.player-card .prate { font-size: 12dp; color: #8c94ad; }
+		.player-card .clock
+		{
+			margin-left: auto;
+			font-size: 26dp; font-weight: bold; color: #e8ebf2;
+			padding: 5dp 14dp; border-radius: 10dp;
+			background-color: #0e1430;
+		}
+		.player-card.active { border-color: #5de4c7; }
+		.player-card.active .clock { color: #07121a; decorator: linear-gradient(120deg, #5de4c7, #4ea7ff); }
+
+		/* Right side panel with eval + move list + controls. */
+		.hud-side
+		{
+			position: absolute; right: 32dp; top: 96dp; bottom: 32dp; width: 320dp;
+			display: flex; flex-direction: column;
+		}
+		.movelist { flex: 1 1 auto; overflow-y: auto; margin: 4dp 0 14dp 0; }
+		.move-row { display: flex; flex-direction: row; padding: 6dp 10dp; border-radius: 8dp; }
+		.move-row:nth-child(even) { background-color: #ffffff08; }
+		.move-row .num { flex: 0 0 36dp; color: #6f7798; }
+		.move-row .w { flex: 1 1 auto; color: #e8ebf2; }
+		.move-row .b { flex: 1 1 auto; color: #c7cde0; }
+		.move-row .b.current { color: #5de4c7; font-weight: bold; }
+
+		.captured { display: flex; flex-direction: row; font-size: 20dp; color: #8c94ad; padding: 2dp; min-height: 26dp; }
+		.eval-bar
+		{
+			height: 10dp; border-radius: 6dp; margin: 6dp 0 14dp 0;
+			background-color: #0e1430;
+			decorator: horizontal-gradient(#e8ebf2 #11162e);
+		}
+		.control-row { display: flex; flex-direction: row; }
+		.control-row > button { flex: 1 1 auto; margin: 0 5dp; padding: 11dp 0; }
+		.control-row > button:first-child { margin-left: 0; }
+		.control-row > button:last-child { margin-right: 0; }
+	</style>
+</head>
+
+<body>
+	<!-- Top bar: title + leave-game controls -->
+	<div class="hud-top">
+		<button class="btn-ghost" id="nav_game_1">‹ Menu</button>
+		<div class="col" style="margin-left: 16dp;">
+			<span class="brand"><span class="accent">◆</span> LIVE GAME</span>
+			<span class="subtitle">5 + 3 Blitz · Casual</span>
+		</div>
+		<div class="spacer"/>
+		<button class="btn-ghost" id="nav_game_2">⚙ Settings</button>
+	</div>
+
+	<!-- Left: player cards with clocks -->
+	<div class="hud-left">
+		<div class="player-card">
+			<span class="avatar">♚</span>
+			<div class="col">
+				<span class="pname">Stockfish · Lvl 4</span>
+				<span class="prate">AI · ~1600</span>
+			</div>
+			<span class="clock">4:58</span>
+		</div>
+		<div class="player-card active">
+			<span class="avatar">♔</span>
+			<div class="col">
+				<span class="pname">You</span>
+				<span class="prate">Rapid 1842</span>
+			</div>
+			<span class="clock">5:01</span>
+		</div>
+	</div>
+
+	<!-- Right: evaluation, captured, move list, controls -->
+	<div class="hud-side glass">
+		<div class="panel-title">Evaluation</div>
+		<div class="eval-bar"/>
+		<div class="row"><span class="muted" style="flex:1 1 auto;">+0.4</span><span class="accent-text">White slightly better</span></div>
+
+		<div class="panel-title" style="margin-top: 16dp;">Captured</div>
+		<div class="captured">♟ ♟ ♝</div>
+
+		<div class="panel-title" style="margin-top: 8dp;">Moves</div>
+		<div class="movelist">
+			<div class="move-row"><span class="num">1.</span><span class="w">e4</span><span class="b">e5</span></div>
+			<div class="move-row"><span class="num">2.</span><span class="w">Nf3</span><span class="b">Nc6</span></div>
+			<div class="move-row"><span class="num">3.</span><span class="w">Bb5</span><span class="b">a6</span></div>
+			<div class="move-row"><span class="num">4.</span><span class="w">Ba4</span><span class="b">Nf6</span></div>
+			<div class="move-row"><span class="num">5.</span><span class="w">O-O</span><span class="b">Be7</span></div>
+			<div class="move-row"><span class="num">6.</span><span class="w">Re1</span><span class="b">b5</span></div>
+			<div class="move-row"><span class="num">7.</span><span class="w">Bb3</span><span class="b">d6</span></div>
+			<div class="move-row"><span class="num">8.</span><span class="w">c3</span><span class="b current">O-O</span></div>
+		</div>
+
+		<div class="control-row" style="margin-bottom: 10dp;">
+			<button class="btn-ghost">⏮</button>
+			<button class="btn-ghost">‹</button>
+			<button class="btn-ghost">›</button>
+			<button class="btn-ghost">⏭</button>
+		</div>
+		<div class="control-row">
+			<button class="btn-ghost">↩ Takeback</button>
+			<button class="btn-ghost">½ Draw</button>
+			<button class="btn-ghost" id="nav_game_3">⚑ Resign</button>
+		</div>
+	</div>
+</body>
+</rml>

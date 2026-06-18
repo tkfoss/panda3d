@@ -1,0 +1,112 @@
+<rml>
+<head>
+	<title>Chess — Main Menu</title>
+	<link type="text/rcss" href="chess.rcss"/>
+	<style>
+		.menu-layout
+		{
+			display: flex;
+			flex-direction: row;
+			flex: 1 1 auto;
+		}
+		.menu-left
+		{
+			flex: 0 0 460dp;
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			margin-right: 40dp;
+		}
+		.menu-right
+		{
+			flex: 1 1 auto;
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+		}
+		.hero
+		{
+			font-size: 56dp;
+			font-weight: bold;
+			color: #ffffff;
+			letter-spacing: 3dp;
+			margin-bottom: 6dp;
+			font-effect: glow(3dp 3dp #5de4c733), glow(16dp #7a5cff44);
+		}
+		.hero .accent { color: #5de4c7; }
+		.hero-sub { font-size: 17dp; color: #8c94ad; margin-bottom: 34dp; }
+		.menu-board-preview
+		{
+			height: 420dp;
+			border-radius: 20dp;
+			border: 1dp #ffffff14;
+			background-color: #0e1430aa;
+			decorator: radial-gradient(circle farthest-corner at 30% 20%, #233066ff, #0e1430ff);
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			align-items: center;
+		}
+		.menu-board-preview .king { font-size: 150dp; color: #ffffff; font-effect: glow(20dp #7a5cff66); }
+		.menu-board-preview .note { color: #6f7798; font-size: 13dp; margin-top: 10dp; }
+		.footer { margin-top: 26dp; color: #6f7798; font-size: 13dp; }
+		.statbar { display: flex; flex-direction: row; margin-top: 22dp; }
+		.statbar .stat { flex: 1 1 auto; }
+		.statbar .stat .big-number { font-size: 28dp; }
+		.statbar .stat .muted { font-size: 12dp; }
+	</style>
+</head>
+
+<body class="screen">
+	<div class="topbar">
+		<div class="col">
+			<span class="brand"><span class="accent">◆</span> AETHER CHESS</span>
+			<span class="subtitle">3D Chess · Modern Edition</span>
+		</div>
+		<div class="spacer"/>
+		<button class="btn-ghost" id="nav_menu_1">♟ Player</button>
+	</div>
+
+	<div class="menu-layout">
+		<div class="menu-left">
+			<div class="hero">PLAY <span class="accent">CHESS</span></div>
+			<div class="hero-sub">Sharpen your game against the AI, challenge friends, or solve tactical puzzles.</div>
+
+			<button class="btn-menu btn-primary" id="nav_menu_2">
+				<span class="glyph">♞</span> Play
+				<span class="meta">Set up a game vs AI or a friend</span>
+			</button>
+			<button class="btn-menu" id="nav_menu_3">
+				<span class="glyph">✦</span> Puzzles
+				<span class="meta">Train tactics with curated positions</span>
+			</button>
+			<button class="btn-menu" id="nav_menu_4">
+				<span class="glyph">▤</span> Profile &amp; Stats
+				<span class="meta">Ratings, history and progress</span>
+			</button>
+			<button class="btn-menu" id="nav_menu_5">
+				<span class="glyph">⚙</span> Settings
+				<span class="meta">Board, sound, and gameplay options</span>
+			</button>
+
+			<div class="btn-row" style="margin-top: 14dp;">
+				<button class="btn-ghost" id="nav_menu_6">Quit</button>
+			</div>
+		</div>
+
+		<div class="menu-right">
+			<div class="menu-board-preview">
+				<span class="king">♚</span>
+				<span class="note">3D board renders here in the game</span>
+			</div>
+			<div class="statbar">
+				<div class="stat"><div class="big-number">1842</div><div class="muted">Rapid rating</div></div>
+				<div class="stat"><div class="big-number">312</div><div class="muted">Games played</div></div>
+				<div class="stat"><div class="big-number accent-text">68%</div><div class="muted">Win rate</div></div>
+			</div>
+		</div>
+	</div>
+
+	<div class="footer">RmlUi Chess UI sample — press <strong>F8</strong> for the debugger, <strong>Esc</strong> to exit.</div>
+</body>
+</rml>

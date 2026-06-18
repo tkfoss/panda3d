@@ -4,21 +4,38 @@
 # Models: Eddie Canaan
 # Last Updated: 2015-03-13
 #
-# This tutorial shows how to determine what objects the mouse is pointing to
-# We do this using a collision ray that extends from the mouse position
-# and points straight into the scene, and see what it collides with. We pick
-# the object with the closest collision
+# This sample shows mouse-picking on a 3D chessboard, wrapped in a modern RmlUi
+# front-end. A dark "glassmorphism" main menu, game-creation lobby, puzzles,
+# profile and settings screens are layered over the 3D scene using an RmlRegion.
+# Choosing "Start game" hides the UI and reveals the interactive 3D board; the
+# in-game "Menu" / "Resign" buttons bring the menu back.
+#
+# The 3D picking part: a collision ray extends from the mouse into the scene and
+# we pick the closest square it collides with, then drag pieces between squares.
+
+import os
+import sys
 
 from direct.showbase.ShowBase import ShowBase
 from panda3d.core import CollisionTraverser, CollisionNode
 from panda3d.core import CollisionHandlerQueue, CollisionRay
-from panda3d.core import AmbientLight, DirectionalLight, LightAttrib
-from panda3d.core import TextNode
+from panda3d.core import AmbientLight, DirectionalLight
 from panda3d.core import LPoint3, LVector3, BitMask32
-from direct.gui.OnscreenText import OnscreenText
+from panda3d.core import loadPrcFileData
 from direct.showbase.DirectObject import DirectObject
 from direct.task.Task import Task
-import sys
+
+from panda3d.rmlui import RmlRegion, RmlInputHandler
+
+SAMPLE_DIR = os.path.dirname(os.path.abspath(__file__))
+UI_DIR = os.path.join(SAMPLE_DIR, "ui")
+# Add the sample directory (for the 3D models/) and the UI directory (so RmlUi's
+# file interface resolves the relative rcss link and any UI images) to the model
+# search path. This lets the sample run from any working directory.
+loadPrcFileData("", f"model-path {SAMPLE_DIR}")
+loadPrcFileData("", f"model-path {UI_DIR}")
+loadPrcFileData("", "win-size 1600 900")
+loadPrcFileData("", "window-title Aether Chess")
 
 # First we define some constants for the colors
 BLACK = (0, 0, 0, 1)
@@ -26,23 +43,21 @@ WHITE = (1, 1, 1, 1)
 HIGHLIGHT = (0, 1, 1, 1)
 PIECEBLACK = (.15, .15, .15, 1)
 
-# Now we define some helper functions that we will need later
 
 # This function, given a line (vector plus origin point) and a desired z value,
 # will give us the point on the line where the desired z value is what we want.
 # This is how we know where to position an object in 3D space based on a 2D mouse
 # position. It also assumes that we are dragging in the XY plane.
-#
-# This is derived from the mathematical of a plane, solved for a given point
 def PointAtZ(z, point, vec):
     return point + vec * ((z - point.getZ()) / vec.getZ())
 
-# A handy little function for getting the proper position for a given square1
+
+# A handy little function for getting the proper position for a given square
 def SquarePos(i):
     return LPoint3((i % 8) - 3.5, int(i // 8) - 3.5, 0)
 
+
 # Helper function for determining whether a square should be white or black
-# The modulo operations (%) generate the every-other pattern of a chess-board
 def SquareColor(i):
     if (i + ((i // 8) % 2)) % 2:
         return BLACK
@@ -50,108 +65,232 @@ def SquareColor(i):
         return WHITE
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+#  RmlUi front-end
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Maps each navigation button's element id (assigned in the rml) to the screen it
+# should switch to. "quit" and "game" are handled specially.
+NAV_MAP = {
+    "nav_menu_1": "profile",
+    "nav_menu_2": "play",
+    "nav_menu_3": "puzzles",
+    "nav_menu_4": "profile",
+    "nav_menu_5": "settings",
+    "nav_menu_6": "quit",
+    "nav_play_1": "menu",
+    "nav_play_2": "game",
+    "nav_play_3": "menu",
+    "nav_game_1": "menu",
+    "nav_game_2": "settings",
+    "nav_game_3": "menu",
+    "nav_puzzles_1": "menu",
+    "nav_puzzles_2": "profile",
+    "nav_profile_1": "menu",
+    "nav_profile_2": "play",
+    "nav_profile_3": "settings",
+    "nav_settings_1": "menu",
+    "nav_settings_2": "menu",
+}
+
+SCREENS = ("menu", "play", "game", "puzzles", "profile", "settings")
+
+
+class ChessUI:
+    """Loads the RmlUi screens, layers them over the 3D scene, and routes
+    navigation between them. Calls back into the demo to show/hide the board."""
+
+    def __init__(self, base, demo):
+        self.base = base
+        self.demo = demo
+
+        self.input_handler = RmlInputHandler()
+        base.mouseWatcher.attach_new_node(self.input_handler)
+
+        self.region = RmlRegion.make("chess-ui", base.win)
+        self.region.set_input_handler(self.input_handler)
+
+        ctx = self.region.get_context()
+        for ttf in ("LatoLatin-Regular.ttf", "LatoLatin-Bold.ttf",
+                    "LatoLatin-Italic.ttf", "LatoLatin-BoldItalic.ttf"):
+            ctx.load_font_face(os.path.join(UI_DIR, ttf))
+        # DejaVu Sans provides the chess pieces and geometric symbols that Lato
+        # lacks; registered as a fallback face so those glyphs still render.
+        ctx.load_font_face(os.path.join(UI_DIR, "DejaVuSans.ttf"), True)
+
+        # Load every screen up front and keep them hidden until navigated to.
+        self.docs = {}
+        for name in SCREENS:
+            doc = ctx.load_document(os.path.join(UI_DIR, f"{name}.rml"))
+            if not doc:
+                raise RuntimeError(f"Failed to load UI screen '{name}.rml'")
+            doc.hide()
+            self.docs[name] = doc
+
+        self.region.init_debugger()
+
+        self._bind_navigation()
+        self._bind_settings_tabs()
+        self.current = None
+        self.show_screen("menu")
+
+    def _bind_navigation(self):
+        for element_id, target in NAV_MAP.items():
+            for doc in self.docs.values():
+                el = doc.get_element_by_id(element_id)
+                if el:
+                    el.add_event_listener(
+                        "click", lambda ev, t=target: self.goto(t))
+                    break
+
+    def _bind_settings_tabs(self):
+        # The settings screen has a left nav whose items switch the content panel
+        # on the right. Wire each nav item to show its panel and mark itself active.
+        doc = self.docs["settings"]
+        self._settings_tabs = [
+            ("tab_board", "panel_board"),
+            ("tab_pieces", "panel_pieces"),
+            ("tab_sound", "panel_sound"),
+            ("tab_gameplay", "panel_gameplay"),
+            ("tab_graphics", "panel_graphics"),
+            ("tab_controls", "panel_controls"),
+        ]
+        for tab_id, panel_id in self._settings_tabs:
+            tab = doc.get_element_by_id(tab_id)
+            if tab:
+                tab.add_event_listener(
+                    "click", lambda ev, p=panel_id: self._show_settings_panel(p))
+
+    def _show_settings_panel(self, panel_id):
+        doc = self.docs["settings"]
+        for tab_id, pid in self._settings_tabs:
+            panel = doc.get_element_by_id(pid)
+            if panel:
+                panel.set_class("hidden", pid != panel_id)
+            tab = doc.get_element_by_id(tab_id)
+            if tab:
+                tab.set_class("active", pid == panel_id)
+
+    def show_screen(self, name):
+        if self.current is self.docs.get(name):
+            return
+        if self.current:
+            self.current.hide()
+        self.current = self.docs[name]
+        self.current.show()
+        self.current.pull_to_front()
+
+    def goto(self, target):
+        if target == "quit":
+            self.base.userExit()
+        elif target == "game":
+            # Reveal the interactive 3D board and lay the transparent game HUD
+            # (clocks, move list, Menu/Resign) over it. Empty areas of the HUD
+            # let clicks fall through to the board for piece picking.
+            self.demo.enter_game()
+            self.show_screen("game")
+        else:
+            # Any normal screen implies leaving the live game, so put the board
+            # back to its idle (hidden) state behind the opaque menu screens.
+            self.demo.exit_game()
+            self.show_screen(target)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  3D chessboard
+# ──────────────────────────────────────────────────────────────────────────────
+
 class ChessboardDemo(ShowBase):
     def __init__(self):
-        # Initialize the ShowBase class from which we inherit, which will
-        # create a window and set up everything we need for rendering into it.
         ShowBase.__init__(self)
 
-        # This code puts the standard title and instruction text on screen
-        self.title = OnscreenText(text="Panda3D: Tutorial - Mouse Picking",
-                                  style=1, fg=(1, 1, 1, 1), shadow=(0, 0, 0, 1),
-                                  pos=(0.8, -0.95), scale = .07)
-        self.escapeEvent = OnscreenText(
-            text="ESC: Quit", parent=base.a2dTopLeft,
-            style=1, fg=(1, 1, 1, 1), pos=(0.06, -0.1),
-            align=TextNode.ALeft, scale = .05)
-        self.mouse1Event = OnscreenText(
-            text="Left-click and drag: Pick up and drag piece",
-            parent=base.a2dTopLeft, align=TextNode.ALeft,
-            style=1, fg=(1, 1, 1, 1), pos=(0.06, -0.16), scale=.05)
-
-        self.accept('escape', sys.exit)  # Escape quits
-        self.disableMouse()  # Disble mouse camera control
+        self.disableMouse()  # Disable mouse camera control
         camera.setPosHpr(0, -12, 8, 0, -35, 0)  # Set the camera
-        self.setupLights()  # Setup default lighting
+        # Dark backdrop matching the UI theme, shown behind the board in-game.
+        self.win.setClearColor((0.04, 0.05, 0.09, 1))
+        self.setupLights()
 
-        # Since we are using collision detection to do picking, we set it up like
-        # any other collision detection system with a traverser and a handler
-        self.picker = CollisionTraverser()  # Make a traverser
-        self.pq = CollisionHandlerQueue()  # Make a handler
-        # Make a collision node for our picker ray
+        # Collision setup for mouse-picking the squares.
+        self.picker = CollisionTraverser()
+        self.pq = CollisionHandlerQueue()
         self.pickerNode = CollisionNode('mouseRay')
-        # Attach that node to the camera since the ray will need to be positioned
-        # relative to it
         self.pickerNP = camera.attachNewNode(self.pickerNode)
-        # Everything to be picked will use bit 1. This way if we were doing other
-        # collision we could separate it
         self.pickerNode.setFromCollideMask(BitMask32.bit(1))
-        self.pickerRay = CollisionRay()  # Make our ray
-        # Add it to the collision node
+        self.pickerRay = CollisionRay()
         self.pickerNode.addSolid(self.pickerRay)
-        # Register the ray as something that can cause collisions
         self.picker.addCollider(self.pickerNP, self.pq)
-        # self.picker.showCollisions(render)
 
-        # Now we create the chess board and its pieces
-
-        # We will attach all of the squares to their own root. This way we can do the
-        # collision pass just on the squares and save the time of checking the rest
-        # of the scene
+        # Build the board and pieces under a single root so we can show/hide and
+        # collide against just the squares.
         self.squareRoot = render.attachNewNode("squareRoot")
+        self.pieceRoot = render.attachNewNode("pieceRoot")
 
-        # For each square
         self.squares = [None for i in range(64)]
         self.pieces = [None for i in range(64)]
         for i in range(64):
-            # Load, parent, color, and position the model (a single square
-            # polygon)
             self.squares[i] = loader.loadModel("models/square")
             self.squares[i].reparentTo(self.squareRoot)
             self.squares[i].setPos(SquarePos(i))
             self.squares[i].setColor(SquareColor(i))
-            # Set the model itself to be collideable with the ray. If this model was
-            # any more complex than a single polygon, you should set up a collision
-            # sphere around it instead. But for single polygons this works
-            # fine.
             self.squares[i].find("**/polygon").node().setIntoCollideMask(
                 BitMask32.bit(1))
-            # Set a tag on the square's node so we can look up what square this is
-            # later during the collision pass
             self.squares[i].find("**/polygon").node().setTag('square', str(i))
 
-            # We will use this variable as a pointer to whatever piece is currently
-            # in this square
-
-        # The order of pieces on a chessboard from white's perspective. This list
-        # contains the constructor functions for the piece classes defined
-        # below
         pieceOrder = (Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook)
-
         for i in range(8, 16):
-            # Load the white pawns
-            self.pieces[i] = Pawn(i, WHITE)
+            self.pieces[i] = Pawn(i, WHITE, self.pieceRoot)
         for i in range(48, 56):
-            # load the black pawns
-            self.pieces[i] = Pawn(i, PIECEBLACK)
+            self.pieces[i] = Pawn(i, PIECEBLACK, self.pieceRoot)
         for i in range(8):
-            # Load the special pieces for the front row and color them white
-            self.pieces[i] = pieceOrder[i](i, WHITE)
-            # Load the special pieces for the back row and color them black
-            self.pieces[i + 56] = pieceOrder[i](i + 56, PIECEBLACK)
+            self.pieces[i] = pieceOrder[i](i, WHITE, self.pieceRoot)
+            self.pieces[i + 56] = pieceOrder[i](i + 56, PIECEBLACK, self.pieceRoot)
 
-        # This will represent the index of the currently highlited square
         self.hiSq = False
-        # This wil represent the index of the square where currently dragged piece
-        # was grabbed from
         self.dragging = False
+        self.in_game = False
 
-        # Start the task that handles the picking
+        # The board starts hidden behind the menu.
+        self.squareRoot.hide()
+        self.pieceRoot.hide()
+
+        # Picking task and click handlers run continuously but only act in-game.
         self.mouseTask = taskMgr.add(self.mouseTask, 'mouseTask')
-        self.accept("mouse1", self.grabPiece)  # left-click grabs a piece
-        self.accept("mouse1-up", self.releasePiece)  # releasing places it
+        self.accept("mouse1", self.grabPiece)
+        self.accept("mouse1-up", self.releasePiece)
 
-    # This function swaps the positions of two pieces
+        # Build the UI overlay last, once the 3D scene exists.
+        self.ui = ChessUI(self, self)
+
+        # Keys: Escape quits, F1/` toggles the RmlUi debugger.
+        self.accept("escape", self.userExit)
+
+        def toggle_dbg():
+            self.ui.region.set_debugger_visible(
+                not self.ui.region.is_debugger_visible())
+        self.accept("f1", toggle_dbg)
+        self.accept("`", toggle_dbg)
+
+    # ── Game state transitions driven by the UI ────────────────────────────
+
+    def enter_game(self):
+        self.in_game = True
+        self.squareRoot.show()
+        self.pieceRoot.show()
+
+    def exit_game(self):
+        if not self.in_game and self.squareRoot.isHidden():
+            return
+        self.in_game = False
+        # Drop any piece being dragged and clear highlight.
+        self.dragging = False
+        if self.hiSq is not False:
+            self.squares[self.hiSq].setColor(SquareColor(self.hiSq))
+            self.hiSq = False
+        self.squareRoot.hide()
+        self.pieceRoot.hide()
+
+    # ── Picking / dragging ─────────────────────────────────────────────────
+
     def swapPieces(self, fr, to):
         temp = self.pieces[fr]
         self.pieces[fr] = self.pieces[to]
@@ -164,73 +303,53 @@ class ChessboardDemo(ShowBase):
             self.pieces[to].obj.setPos(SquarePos(to))
 
     def mouseTask(self, task):
-        # This task deals with the highlighting and dragging based on the mouse
+        # Picking only matters while the live board is shown.
+        if not self.in_game:
+            return Task.cont
 
-        # First, clear the current highlight
         if self.hiSq is not False:
             self.squares[self.hiSq].setColor(SquareColor(self.hiSq))
             self.hiSq = False
 
-        # Check to see if we can access the mouse. We need it to do anything
-        # else
         if self.mouseWatcherNode.hasMouse():
-            # get the mouse position
             mpos = self.mouseWatcherNode.getMouse()
-
-            # Set the position of the ray based on the mouse position
             self.pickerRay.setFromLens(self.camNode, mpos.getX(), mpos.getY())
 
-            # If we are dragging something, set the position of the object
-            # to be at the appropriate point over the plane of the board
             if self.dragging is not False:
-                # Gets the point described by pickerRay.getOrigin(), which is relative to
-                # camera, relative instead to render
                 nearPoint = render.getRelativePoint(
                     camera, self.pickerRay.getOrigin())
-                # Same thing with the direction of the ray
                 nearVec = render.getRelativeVector(
                     camera, self.pickerRay.getDirection())
                 self.pieces[self.dragging].obj.setPos(
                     PointAtZ(.5, nearPoint, nearVec))
 
-            # Do the actual collision pass (Do it only on the squares for
-            # efficiency purposes)
             self.picker.traverse(self.squareRoot)
             if self.pq.getNumEntries() > 0:
-                # if we have hit something, sort the hits so that the closest
-                # is first, and highlight that node
                 self.pq.sortEntries()
                 i = int(self.pq.getEntry(0).getIntoNode().getTag('square'))
-                # Set the highlight on the picked square
                 self.squares[i].setColor(HIGHLIGHT)
                 self.hiSq = i
 
         return Task.cont
 
     def grabPiece(self):
-        # If a square is highlighted and it has a piece, set it to dragging
-        # mode
+        if not self.in_game:
+            return
         if self.hiSq is not False and self.pieces[self.hiSq]:
             self.dragging = self.hiSq
             self.hiSq = False
 
     def releasePiece(self):
-        # Letting go of a piece. If we are not on a square, return it to its original
-        # position. Otherwise, swap it with the piece in the new square
-        # Make sure we really are dragging something
+        if not self.in_game:
+            return
         if self.dragging is not False:
-            # We have let go of the piece, but we are not on a square
             if self.hiSq is False:
-                self.pieces[self.dragging].obj.setPos(
-                    SquarePos(self.dragging))
+                self.pieces[self.dragging].obj.setPos(SquarePos(self.dragging))
             else:
-                # Otherwise, swap the pieces
                 self.swapPieces(self.dragging, self.hiSq)
-
-        # We are no longer dragging anything
         self.dragging = False
 
-    def setupLights(self):  # This function sets up some default lighting
+    def setupLights(self):
         ambientLight = AmbientLight("ambientLight")
         ambientLight.setColor((.8, .8, .8, 1))
         directionalLight = DirectionalLight("directionalLight")
@@ -240,21 +359,16 @@ class ChessboardDemo(ShowBase):
         render.setLight(render.attachNewNode(ambientLight))
 
 
-# Class for a piece. This just handles loading the model and setting initial
-# position and color
+# Class for a piece: loads the model, parents it, sets initial position and color.
 class Piece(object):
-    def __init__(self, square, color):
+    def __init__(self, square, color, parent):
         self.obj = loader.loadModel(self.model)
-        self.obj.reparentTo(render)
+        self.obj.reparentTo(parent)
         self.obj.setColor(color)
         self.obj.setPos(SquarePos(square))
+        self.square = square
 
 
-# Classes for each type of chess piece
-# Obviously, we could have done this by just passing a string to Piece's init.
-# But if you wanted to make rules for how the pieces move, a good place to start
-# would be to make an isValidMove(toSquare) method for each piece type
-# and then check if the destination square is acceptible during ReleasePiece
 class Pawn(Piece):
     model = "models/pawn"
 
@@ -272,6 +386,7 @@ class Knight(Piece):
 
 class Rook(Piece):
     model = "models/rook"
+
 
 # Do the main initialization and start 3D rendering
 demo = ChessboardDemo()
