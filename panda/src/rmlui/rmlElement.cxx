@@ -12,9 +12,11 @@
  */
 
 #include "rmlElement.h"
+#include "rmlEvent.h"
 #include "pointerTo.h"
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Event.h>
 
 /**
  * Returns the element's id attribute.
@@ -121,10 +123,6 @@ set_value(const std::string &value) {
     rmlui_dynamic_cast<Rml::ElementFormControl *>(_el);
   if (fc) fc->SetValue(value);
 }
-
-// ---------------------------------------------------------------------------
-// Group A — additions
-// ---------------------------------------------------------------------------
 
 /**
  * Returns the element's offset position relative to its offset parent.
@@ -282,164 +280,46 @@ void RmlElement::
 remove_child(RmlElement *child) {
   nassertv(_el != nullptr);
   nassertv(child != nullptr && child->_el != nullptr);
-#ifdef HAVE_PYTHON
-  // Detach listeners explicitly before RemoveChild fires OnDetach, so the
-  // destructor's else-branch (when _el is null) doesn't double-delete them.
-  for (auto *listener : child->_listeners) {
-    listener->_owner = nullptr;
-    child->_el->RemoveEventListener(listener->_event, listener);
-  }
-  child->_listeners.clear();
-#endif
+  // RmlUi fires OnDetach on any attached listeners as the element is destroyed,
+  // which deletes them; we do not track listeners on the wrapper.
   _el->RemoveChild(child->_el);
   child->_el = nullptr;
 }
 
-#if defined(HAVE_PYTHON) && !defined(CPPPARSER)
-#include "py_panda.h"
-#include <RmlUi/Core/Event.h>
-
-#ifndef RML_PY_DECREF_WITH_GIL_DEFINED
-#define RML_PY_DECREF_WITH_GIL_DEFINED
-static void
-py_decref_with_gil(PyObject *obj) {
-  if (obj) {
-    PyGILState_STATE gs = PyGILState_Ensure();
-    Py_DECREF(obj);
-    PyGILState_Release(gs);
-  }
-}
-#endif
-
 /**
- * Attaches a Python callable to a DOM event on this element.
- * When dom_event fires, callback(event_dict) is invoked with a Python dict
- * containing all event parameters plus "type" (the DOM event type string).
- * Multiple listeners may be attached by calling this method repeatedly.
+ * Attaches a callback to a DOM event on this element.  See the header for the
+ * lifetime contract: the listener is owned by the RmlUi element, not by this
+ * wrapper.
  */
 void RmlElement::
-add_event_listener(const std::string &dom_event, PyObject *callback) {
+add_event_listener(const std::string &dom_event, CallbackObject *callback) {
   nassertv(_el != nullptr);
-  nassertv(callback != nullptr && callback != Py_None);
+  nassertv(callback != nullptr);
 
-  Py_INCREF(callback);
-  std::shared_ptr<PyObject> cb(callback, py_decref_with_gil);
-
-  auto *listener = new PandaEventListener(std::move(cb), this, dom_event);
-  _listeners.push_back(listener);
+  // RmlUi takes a non-owning EventListener pointer and calls OnDetach (which
+  // deletes the listener) when the element is destroyed.  The listener holds a
+  // strong reference to the callback.
+  RmlEventListener *listener = new RmlEventListener(callback);
   _el->AddEventListener(dom_event, listener);
 }
 
 /**
- * Explicitly remove each listener from the DOM element before clearing the
- * list.  This triggers OnDetach (which calls delete this on each listener)
- * while _el is still valid, preventing dangling _owner dereferences later
- * if RmlUi outlives this wrapper.
+ *
  */
 RmlElement::
 ~RmlElement() {
-  if (_el != nullptr) {
-    for (auto *listener : _listeners) {
-      listener->_owner = nullptr;
-      _el->RemoveEventListener(listener->_event, listener);
-    }
-  } else {
-    for (auto *listener : _listeners) {
-      listener->_owner = nullptr;
-      delete listener;
-    }
-  }
-  _listeners.clear();
   _el = nullptr;
 }
 
 /**
- * Builds a Python dict from the Rml::Event parameters and calls the callback.
- * Keys are the parameter names; values are bool, int, float, or str.
- * The key "type" always holds the DOM event type string (e.g. "click").
+ * Wraps the Rml::Event in an RmlEvent and dispatches it to the CallbackObject.
+ * The RmlEvent (like every Panda CallbackData) is a transient stack object only
+ * valid for the duration of the callback; see the header.
  */
-void RmlElement::PandaEventListener::
+void RmlElement::RmlEventListener::
 ProcessEvent(Rml::Event &event) {
-  PyGILState_STATE gs = PyGILState_Ensure();
-
-  PyObject *d = PyDict_New();
-  if (!d) {
-    PyErr_Print();
-    PyGILState_Release(gs);
-    return;
+  if (_callback != nullptr) {
+    RmlEvent data(&event);
+    _callback->do_callback(&data);
   }
-
-  // "type" is always present.
-  const Rml::String &type = event.GetType();
-  PyObject *type_str = PyUnicode_FromStringAndSize(type.data(), type.size());
-  if (type_str) {
-    PyDict_SetItemString(d, "type", type_str);
-    Py_DECREF(type_str);
-  }
-
-  // All remaining parameters from the event dictionary.
-  for (const auto &kv : event.GetParameters()) {
-    const Rml::String &key = kv.first;
-    const Rml::Variant &val = kv.second;
-
-    PyObject *py_val = nullptr;
-    switch (val.GetType()) {
-    case Rml::Variant::BOOL:
-      py_val = PyBool_FromLong(val.Get<bool>() ? 1 : 0);
-      break;
-    case Rml::Variant::BYTE:
-    case Rml::Variant::CHAR:
-    case Rml::Variant::INT:
-      py_val = PyLong_FromLong(val.Get<int>());
-      break;
-    case Rml::Variant::INT64:
-      py_val = PyLong_FromLongLong(val.Get<int64_t>());
-      break;
-    case Rml::Variant::UINT:
-      py_val = PyLong_FromUnsignedLong(val.Get<unsigned int>());
-      break;
-    case Rml::Variant::UINT64:
-      py_val = PyLong_FromUnsignedLongLong(val.Get<uint64_t>());
-      break;
-    case Rml::Variant::FLOAT:
-      py_val = PyFloat_FromDouble(val.Get<float>());
-      break;
-    case Rml::Variant::DOUBLE:
-      py_val = PyFloat_FromDouble(val.Get<double>());
-      break;
-    case Rml::Variant::STRING: {
-      Rml::String s = val.Get<Rml::String>();
-      py_val = PyUnicode_FromStringAndSize(s.data(), s.size());
-      break;
-    }
-    default:
-      py_val = Py_NewRef(Py_None);
-      break;
-    }
-
-    PyObject *py_key = PyUnicode_FromStringAndSize(key.data(), key.size());
-    if (py_key && py_val) {
-      PyDict_SetItem(d, py_key, py_val);
-    }
-    Py_XDECREF(py_key);
-    Py_XDECREF(py_val);
-  }
-
-  PyObject *result = PyObject_CallOneArg(_callback.get(), d);
-  Py_DECREF(d);
-  if (!result) {
-    PyErr_Print();
-  } else {
-    Py_DECREF(result);
-  }
-
-  PyGILState_Release(gs);
 }
-
-#else  // !HAVE_PYTHON || CPPPARSER
-
-RmlElement::~RmlElement() {
-  _el = nullptr;
-}
-
-#endif  // HAVE_PYTHON && !CPPPARSER

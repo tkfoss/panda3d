@@ -154,7 +154,7 @@ class MyApp(ShowBase):
 
         def updateAlpha(t):
             # another way of setting style on a specific element
-            element.setAttribute('style', 'opacity: ' + str(t) + ';')
+            element.set_attribute('style', 'opacity: ' + str(t) + ';')
 
         alphaInterval = LerpFunc(updateAlpha,
                              duration=time,

@@ -38,6 +38,14 @@
 Configure(config_rmlui);
 NotifyCategoryDef(rmlui, "");
 
+ConfigVariableDouble rmlui_text_gamma
+("rmlui-text-gamma", 1.0,
+ PRC_DESC("Stem-darkening exponent applied to the alpha coverage of generated "
+          "font glyph atlases.  1.0 leaves FreeType's anti-aliasing unchanged; "
+          "values above 1.0 thicken glyph edges for heavier, more legible text "
+          "closer to native macOS / Windows font smoothing.  Set to 1.0 to "
+          "disable."));
+
 ConfigureFn(config_rmlui) {
   init_librmlui();
 }

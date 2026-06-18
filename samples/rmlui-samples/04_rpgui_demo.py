@@ -123,6 +123,11 @@ class RpguiDemo(ShowBase):
         self._cursor_np.setDepthTest(False)
         self._set_cursor("default")
 
+        # RmlSystemInterface::SetMouseCursor fires "rmlui-cursor" with the cursor
+        # name (from the RCSS cursor property) whenever the hovered element's
+        # cursor changes; swap the sprite to match.
+        self.accept("rmlui-cursor", self._set_cursor)
+
     def _set_cursor(self, name):
         key = name if name in self._cursor_textures else "default"
         tex = self._cursor_textures.get(key)
@@ -141,15 +146,10 @@ class RpguiDemo(ShowBase):
     def _wire_events(self):
         doc = self._doc
 
-        # Store all elements we attach listeners to so Python doesn't GC the
-        # wrappers and silently drop the callbacks via RemoveEventListener.
-        self._wired = []
-
         def _wire(el_id, event, callback):
             el = doc.get_element_by_id(el_id)
             if el:
                 el.add_event_listener(event, callback)
-                self._wired.append(el)
 
         # Buttons
         for btn_id, kind in (("btn-normal", "normal"), ("btn-golden", "golden")):
@@ -166,26 +166,22 @@ class RpguiDemo(ShowBase):
         # Class dropdown — poll value each frame (no change event needed)
         # Profession list — same
 
-        # Draggable panel (Group D)
+        # Draggable panel
         drag_panel = doc.get_element_by_id("drag-panel")
         if drag_panel:
-            self._wired.append(drag_panel)
-
             def _on_dragstart(ev):
                 off = drag_panel.get_absolute_offset()
                 self._drag_offset = (
-                    ev.get("mouse_x", 0.0) - off.x,
-                    ev.get("mouse_y", 0.0) - off.y,
+                    ev.mouse_x - off.x,
+                    ev.mouse_y - off.y,
                 )
 
             def _on_drag(ev):
-                x = ev.get("mouse_x", 0.0) - self._drag_offset[0]
-                y = ev.get("mouse_y", 0.0) - self._drag_offset[1]
+                x = ev.mouse_x - self._drag_offset[0]
+                y = ev.mouse_y - self._drag_offset[1]
                 drag_panel.set_property("left", f"{x:.0f}dp")
                 drag_panel.set_property("top",  f"{y:.0f}dp")
 
-            # drag_panel is kept alive by self._wired.
-            # Do not call doc.close() while this demo is running.
             drag_panel.add_event_listener("dragstart", _on_dragstart)
             drag_panel.add_event_listener("drag",      _on_drag)
 

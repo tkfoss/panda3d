@@ -4289,9 +4289,9 @@ if not PkgSkip("VISION"):
 
 if not PkgSkip("RMLUI"):
     OPTS=['DIR:panda/src/rmlui', 'BUILDING:PANDARMUI', 'RMLUI']
-    TargetAdd('p3rmlui_composite.obj', opts=OPTS, input='p3rmlui_composite.cxx')
+    TargetAdd('p3rmlui_composite1.obj', opts=OPTS, input='p3rmlui_composite1.cxx')
 
-    TargetAdd('libp3rmlui.dll', input='p3rmlui_composite.obj')
+    TargetAdd('libp3rmlui.dll', input='p3rmlui_composite1.obj')
     TargetAdd('libp3rmlui.dll', input=COMMON_PANDA_LIBS)
     TargetAdd('libp3rmlui.dll', opts=OPTS)
 
@@ -4299,7 +4299,8 @@ if not PkgSkip("RMLUI"):
     IGATEFILES=GetDirectoryContents('panda/src/rmlui', ["rmlInputHandler.h",
         "rmlInputHandler.cxx", "rmlRegion.h", "rmlRegion.cxx",
         "rmlContext.h", "rmlContext.cxx", "rmlDocument.h", "rmlDocument.cxx",
-        "rmlElement.h", "rmlElement.cxx", "rmlDataModel.h", "rmlDataModel.cxx"])
+        "rmlElement.h", "rmlElement.cxx", "rmlEvent.h", "rmlEvent.cxx",
+        "rmlDataModel.h", "rmlDataModel.cxx"])
     TargetAdd('libp3rmlui.in', opts=OPTS, input=IGATEFILES)
     TargetAdd('libp3rmlui.in', opts=['IMOD:panda3d.rmlui', 'ILIB:libp3rmlui', 'SRCDIR:panda/src/rmlui'])
 

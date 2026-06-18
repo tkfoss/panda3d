@@ -14,6 +14,7 @@
 #include "rmlRegion.h"
 #include "rmlContext.h"
 #include "graphicsOutput.h"
+#include "graphicsWindow.h"
 #include "orthographicLens.h"
 #include "pStatTimer.h"
 
@@ -64,6 +65,28 @@ RmlRegion(GraphicsOutput *window, const LVecBase4 &dr_dimensions,
     return;
   }
   _rml_context = new RmlContext(_context);
+
+  // On a high-DPI ("Retina") display with dpi-aware enabled, the window's
+  // framebuffer has more physical pixels than the logical size that was
+  // requested.  Tell RmlUi about that ratio so that dp-based sizes (fonts,
+  // layout) stay the intended physical size and text is rendered at native
+  // resolution rather than upscaled.  The ratio is the backing scale factor:
+  // actual framebuffer pixels / requested logical pixels.
+  if (window->is_of_type(GraphicsWindow::get_class_type())) {
+    GraphicsWindow *gwin = DCAST(GraphicsWindow, window);
+    int req_x = gwin->get_requested_properties().get_x_size();
+    int fb_x = window->get_x_size();
+    if (req_x > 0 && fb_x > 0) {
+      float ratio = (float)fb_x / (float)req_x;
+      if (ratio > 1.01f) {
+        _context->SetDensityIndependentPixelRatio(ratio);
+        if (rmlui_cat.is_debug()) {
+          rmlui_cat.debug()
+            << "RmlUi density-independent pixel ratio set to " << ratio << "\n";
+        }
+      }
+    }
+  }
 
   _lens = new OrthographicLens;
   _lens->set_film_size(dimensions.x, -dimensions.y);

@@ -91,39 +91,27 @@ class DataBindingSample(ShowBase):
         self.accept("`", toggle_dbg)
 
     def _wire_events(self):
+        def _wire(el_id, callback):
+            el = self._doc.get_element_by_id(el_id)
+            if el:
+                el.add_event_listener("click", callback)
+
         # Basics tab
         for animal in ("dog", "cat", "narwhal"):
-            btn = self._doc.get_element_by_id(f"btn-{animal}")
-            if btn:
-                btn.add_event_listener("click", lambda ev, a=animal: self._set_animal(a))
-
-        btn_text = self._doc.get_element_by_id("btn-toggle-text")
-        if btn_text:
-            btn_text.add_event_listener("click", lambda ev: self._toggle_text())
+            _wire(f"btn-{animal}", lambda ev, a=animal: self._set_animal(a))
+        _wire("btn-toggle-text", lambda ev: self._toggle_text())
 
         # Events tab
-        mouse_box = self._doc.get_element_by_id("mouse-box")
-        if mouse_box:
-            mouse_box.add_event_listener("click", self._on_mouse_click)
+        _wire("mouse-box", self._on_mouse_click)
 
         # data-for tab — list mutation buttons
-        btn_add = self._doc.get_element_by_id("btn-list-add")
-        if btn_add:
-            btn_add.add_event_listener("click", lambda ev: self._list_add())
-
-        btn_remove = self._doc.get_element_by_id("btn-list-remove")
-        if btn_remove:
-            btn_remove.add_event_listener("click", lambda ev: self._list_remove())
-
-        btn_shuffle = self._doc.get_element_by_id("btn-list-shuffle")
-        if btn_shuffle:
-            btn_shuffle.add_event_listener("click", lambda ev: self._list_shuffle())
+        _wire("btn-list-add", lambda ev: self._list_add())
+        _wire("btn-list-remove", lambda ev: self._list_remove())
+        _wire("btn-list-shuffle", lambda ev: self._list_shuffle())
 
         # data-for tab — tree toggle
         for node_id in self._tree_expanded:
-            node = self._doc.get_element_by_id(node_id)
-            if node:
-                node.add_event_listener("click", lambda ev, nid=node_id: self._toggle_tree_node(nid))
+            _wire(node_id, lambda ev, nid=node_id: self._toggle_tree_node(nid))
 
     # ── Basics tab ──────────────────────────────────────────────────
 
@@ -138,8 +126,8 @@ class DataBindingSample(ShowBase):
     # ── Events tab ──────────────────────────────────────────────────
 
     def _on_mouse_click(self, ev):
-        mx = round(ev.get("mouse_x", 0), 1)
-        my = round(ev.get("mouse_y", 0), 1)
+        mx = round(ev.mouse_x, 1)
+        my = round(ev.mouse_y, 1)
         el = self._doc.get_element_by_id("mouse-positions")
         if el:
             el.set_inner_rml(html.escape(f"({mx}, {my}) px"))

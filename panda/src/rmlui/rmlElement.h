@@ -17,13 +17,14 @@
 #include "config_rmlui.h"
 #include "referenceCount.h"
 
+#include "callbackObject.h"
+
 #ifndef CPPPARSER
 #include "luse.h"
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/EventListener.h>
 #include <string>
-#include <memory>
 #endif
 
 /**
@@ -52,7 +53,7 @@ PUBLISHED:
   MAKE_PROPERTY(inner_rml, get_inner_rml, set_inner_rml);
   MAKE_PROPERTY(value, get_value, set_value);
 
-  // A1 — geometry queries
+  // Geometry queries.
   LVecBase2f get_relative_offset() const;
   LVecBase2f get_absolute_offset() const;
   float get_offset_width() const;
@@ -61,42 +62,43 @@ PUBLISHED:
   MAKE_PROPERTY(offset_width,  get_offset_width);
   MAKE_PROPERTY(offset_height, get_offset_height);
 
-  // A2 — attribute management
+  // Attribute management.
   bool has_attribute(const std::string &name) const;
   void remove_attribute(const std::string &name);
 
-  // A3 — inline style by property name
+  // Inline style by property name.
   bool set_property(const std::string &name, const std::string &value);
   void remove_property(const std::string &name);
 
-  // A4 — pseudo-class query
+  // Pseudo-class query.
   bool is_pseudo_class_set(const std::string &pseudo_class) const;
 
-  // A5 — scroll control
+  // Scroll control.
   void scroll_into_view(bool align_with_top = true);
 
-  // A6 — CSS selector query
+  // CSS selector query.
   PT(RmlElement) query_selector(const std::string &selector);
 
-  // A7 — DOM tree traversal
+  // DOM tree traversal.
   PT(RmlElement) get_parent_node() const;
   PT(RmlElement) get_child(int index) const;
   int get_num_children() const;
 
   MAKE_PROPERTY(num_children, get_num_children);
 
-  // A8 — programmatic DOM manipulation
+  // Programmatic DOM manipulation.
   PT(RmlElement) append_child(RmlElement *child);
   void remove_child(RmlElement *child);
 
-#ifdef HAVE_PYTHON
-  // Attach a Python callable to a DOM event on this element.
-  // When the DOM event fires, callback(event_dict) is called where event_dict
-  // is a Python dict containing all event parameters (mouse_x, mouse_y,
-  // value, type, etc.) plus the key "type" set to the DOM event type string.
+  // Attach a callback to a DOM event on this element.  When the event fires,
+  // the callback is invoked with an RmlEvent (a CallbackData specialization)
+  // exposing the event type and its parameters.  From Python a plain callable
+  // may be passed directly; interrogate wraps it in a PythonCallbackObject.
+  //
+  // The listener is owned by the underlying RmlUi element and survives for as
+  // long as the element exists, independent of this wrapper's lifetime.
   // Multiple listeners may be attached by calling this method repeatedly.
-  void add_event_listener(const std::string &dom_event, PyObject *callback);
-#endif
+  void add_event_listener(const std::string &dom_event, CallbackObject *callback);
 
 public:
   RmlElement() = default;
@@ -117,25 +119,20 @@ protected:
   // append_child() moves this into the DOM and clears it.
   Rml::ElementPtr _owned;
 
-#ifdef HAVE_PYTHON
-  struct PandaEventListener : public Rml::EventListener {
-    std::shared_ptr<PyObject> _callback;
-    RmlElement *_owner;
-    std::string _event;
-    PandaEventListener(std::shared_ptr<PyObject> cb, RmlElement *owner,
-                       const std::string &event)
-      : _callback(std::move(cb)), _owner(owner), _event(event) {}
+  // Bridges an Rml::Event to a Panda CallbackObject.  The listener is owned by
+  // the RmlUi element it is attached to (RmlUi never deletes listeners itself;
+  // it calls OnDetach when the element is destroyed, at which point the
+  // listener deletes itself).  It holds a strong reference to the callback, so
+  // its lifetime is fully decoupled from any RmlElement Python wrapper.
+  class RmlEventListener : public Rml::EventListener {
+  public:
+    explicit RmlEventListener(CallbackObject *callback) : _callback(callback) {}
     void ProcessEvent(Rml::Event &event) override;
-    void OnDetach(Rml::Element *) override {
-      if (_owner) {
-        _owner->_el = nullptr;
-        _owner = nullptr;
-      }
-      delete this;
-    }
+    void OnDetach(Rml::Element *) override { delete this; }
+
+  private:
+    PT(CallbackObject) _callback;
   };
-  pvector<PandaEventListener *> _listeners;
-#endif  // HAVE_PYTHON
 #endif  // !CPPPARSER
 };
 

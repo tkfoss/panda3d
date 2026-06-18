@@ -53,10 +53,10 @@ PUBLISHED:
   MAKE_PROPERTY(height, get_height);
   MAKE_PROPERTY(name, get_name);
 
-  // B1 — mouse interaction query
+  // Mouse interaction query.
   bool is_mouse_interacting() const;
 
-  // B2 — hit-test and hover/focus
+  // Hit-test and hover/focus.
   PT(RmlElement) get_element_at_point(float x, float y) const;
   PT(RmlElement) get_hover_element() const;
   PT(RmlElement) get_focus_element() const;
@@ -64,7 +64,7 @@ PUBLISHED:
   MAKE_PROPERTY(hover_element, get_hover_element);
   MAKE_PROPERTY(focus_element, get_focus_element);
 
-  // B3 — document lifecycle
+  // Document lifecycle.
   PT(RmlDocument) load_document_from_memory(const std::string &rml,
                                             const std::string &source_url = std::string());
   void unload_document(RmlDocument *doc);
@@ -73,7 +73,7 @@ PUBLISHED:
 
   MAKE_PROPERTY(num_documents, get_num_documents);
 
-  // B4 — HiDPI and cursor
+  // HiDPI and cursor.
   void set_density_independent_pixel_ratio(float ratio);
   void enable_mouse_cursor(bool enable);
 

@@ -47,69 +47,10 @@ dirty_all() {
 }
 
 #if defined(HAVE_PYTHON) && !defined(CPPPARSER)
-#include "py_panda.h"
+#include "rmlPythonUtil.h"
 #include <memory>
 #include <vector>
 #include <RmlUi/Core/DataVariable.h>
-
-#ifndef RML_PY_DECREF_WITH_GIL_DEFINED
-#define RML_PY_DECREF_WITH_GIL_DEFINED
-static void py_decref_with_gil(PyObject *obj) {
-  if (obj) {
-    PyGILState_STATE gs = PyGILState_Ensure();
-    Py_DECREF(obj);
-    PyGILState_Release(gs);
-  }
-}
-#endif
-
-// Helpers: convert between Rml::Variant and Python objects.
-
-static PyObject *variant_to_python(const Rml::Variant &v) {
-  switch (v.GetType()) {
-  case Rml::Variant::BOOL:
-    return PyBool_FromLong(v.Get<bool>() ? 1 : 0);
-  case Rml::Variant::BYTE:
-  case Rml::Variant::CHAR:
-  case Rml::Variant::INT:
-    return PyLong_FromLong(v.Get<int>());
-  case Rml::Variant::INT64:
-    return PyLong_FromLongLong(v.Get<int64_t>());
-  case Rml::Variant::UINT:
-    return PyLong_FromUnsignedLong(v.Get<unsigned int>());
-  case Rml::Variant::UINT64:
-    return PyLong_FromUnsignedLongLong(v.Get<uint64_t>());
-  case Rml::Variant::FLOAT:
-    return PyFloat_FromDouble(v.Get<float>());
-  case Rml::Variant::DOUBLE:
-    return PyFloat_FromDouble(v.Get<double>());
-  case Rml::Variant::STRING:
-    {
-      Rml::String s = v.Get<Rml::String>();
-      return PyUnicode_FromStringAndSize(s.data(), s.size());
-    }
-  default:
-    Py_RETURN_NONE;
-  }
-}
-
-static void python_to_variant(PyObject *obj, Rml::Variant &out) {
-  if (obj == Py_None) {
-    out.Clear();
-  } else if (PyBool_Check(obj)) {
-    out = (obj == Py_True);
-  } else if (PyLong_Check(obj)) {
-    out = (int)PyLong_AsLong(obj);
-  } else if (PyFloat_Check(obj)) {
-    out = (double)PyFloat_AsDouble(obj);
-  } else if (PyUnicode_Check(obj)) {
-    Py_ssize_t len;
-    const char *s = PyUnicode_AsUTF8AndSize(obj, &len);
-    if (s) {
-      out = Rml::String(s, (size_t)len);
-    }
-  }
-}
 
 /**
  * Binds a named variable backed by Python callables.
@@ -137,12 +78,12 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
   }
 
   Py_XINCREF(getter);
-  std::shared_ptr<PyObject> getter_ref(getter, py_decref_with_gil);
+  std::shared_ptr<PyObject> getter_ref(getter, rml_py_decref_with_gil);
 
   std::shared_ptr<PyObject> setter_ref;
   if (setter != nullptr) {
     Py_XINCREF(setter);
-    setter_ref.reset(setter, py_decref_with_gil);
+    setter_ref.reset(setter, rml_py_decref_with_gil);
   }
 
   Rml::DataGetFunc get_fn = [getter_ref](Rml::Variant &out) {
@@ -151,7 +92,7 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
     if (!result) {
       PyErr_Print();
     } else {
-      python_to_variant(result, out);
+      rml_python_to_variant(result, out);
       Py_DECREF(result);
     }
     PyGILState_Release(gstate);
@@ -161,7 +102,7 @@ bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
   if (setter_ref) {
     set_fn = [setter_ref](const Rml::Variant &v) {
       PyGILState_STATE gstate = PyGILState_Ensure();
-      PyObject *arg = variant_to_python(v);
+      PyObject *arg = rml_variant_to_python(v);
       PyObject *result = PyObject_CallOneArg(setter_ref.get(), arg);
       Py_DECREF(arg);
       if (!result) {
@@ -231,7 +172,7 @@ struct PythonListDefinition final : public Rml::VariableDefinition {
     PyObject **items = PySequence_Fast_ITEMS(list);
     for (Py_ssize_t i = 0; i < n; ++i) {
       Rml::Variant v;
-      python_to_variant(items[i], v);
+      rml_python_to_variant(items[i], v);
       _cache.push_back(std::move(v));
     }
 
@@ -272,7 +213,7 @@ bind_list(const std::string &name, PyObject *getter) {
   }
 
   Py_XINCREF(getter);
-  std::shared_ptr<PyObject> getter_ref(getter, py_decref_with_gil);
+  std::shared_ptr<PyObject> getter_ref(getter, rml_py_decref_with_gil);
 
   // Push the definition into _custom_definitions before calling
   // BindCustomDataVariable so RmlUi never holds a pointer that isn't owned.
@@ -301,7 +242,7 @@ bind_event_callback(const std::string &name, PyObject *callback) {
   }
 
   Py_XINCREF(callback);
-  std::shared_ptr<PyObject> cb_ref(callback, py_decref_with_gil);
+  std::shared_ptr<PyObject> cb_ref(callback, rml_py_decref_with_gil);
 
   Rml::DataEventFunc fn = [cb_ref](Rml::DataModelHandle, Rml::Event &,
                                     const Rml::VariantList &) {

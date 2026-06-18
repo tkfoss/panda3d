@@ -95,8 +95,7 @@ class FeatureShowcase(ShowBase):
                "scroll-target", "scroll-top"]
         self._el = {k: self._doc.get_element_by_id(k) for k in ids}
 
-        # Store every element we attach listeners to — RmlElement wrappers must
-        # stay alive or RemoveEventListener fires on GC and silently drops the callback.
+        # Pre-fetch the elements we reference later (for _set / class toggles).
         for extra_id in ("ping-btn", "submit-btn", "demo-form",
                          "attr-flash-btn",
                          "create-add-btn", "create-remove-btn",
@@ -150,7 +149,7 @@ class FeatureShowcase(ShowBase):
     def _setup_domapi(self):
         # All elements are already in self._el (pre-populated in _setup_rmlui).
 
-        # A3 flash button
+        # Flash button — toggle a CSS class on the target element.
         flash_btn = self._el.get("attr-flash-btn")
         if flash_btn:
             def _on_flash(ev):
@@ -161,7 +160,7 @@ class FeatureShowcase(ShowBase):
                 t.set_class("api-flash", self._attr_flash)
             flash_btn.add_event_listener("click", _on_flash)
 
-        # C4 + A8 — add/remove dynamically created elements
+        # Add/remove dynamically created elements (create_element + append_child).
         add_btn = self._el.get("create-add-btn")
         if add_btn:
             def _on_add(ev):
@@ -191,7 +190,7 @@ class FeatureShowcase(ShowBase):
                 self._set("create-count", str(len(self._created_items)))
             remove_btn.add_event_listener("click", _on_remove)
 
-        # A5 — scroll_into_view buttons
+        # scroll_into_view buttons
         scroll_to = self._el.get("scroll-to-btn")
         if scroll_to:
             def _on_scroll_to(ev):
@@ -239,7 +238,7 @@ class FeatureShowcase(ShowBase):
         return task.cont
 
     def _update_domapi(self):
-        # A1 — geometry queries
+        # Geometry queries
         geo = self._el.get("geo-target")
         if geo:
             rel = geo.get_relative_offset()
@@ -250,13 +249,13 @@ class FeatureShowcase(ShowBase):
             self._set("geo-abs",  f"({abs_.x:.0f}, {abs_.y:.0f})")
             self._set("geo-size", f"{w:.0f} × {h:.0f} dp")
 
-        # A2 + A4 — attribute check and pseudo-class
+        # Attribute check and pseudo-class
         attr = self._el.get("attr-target")
         if attr:
             self._set("attr-has",   str(attr.has_attribute("data-demo")))
             self._set("attr-hover", str(attr.is_pseudo_class_set("hover")))
 
-        # A6 + A7 — traversal
+        # Traversal
         root = self._el.get("traverse-root")
         if root:
             count = root.get_num_children()
@@ -270,7 +269,7 @@ class FeatureShowcase(ShowBase):
             else:
                 self._set("trav-parent", "none")
 
-        # B1 + B2 — context queries
+        # Context queries
         ctx = self.rml.get_context()
         self._set("ctx-interacting", str(ctx.is_mouse_interacting()))
         hover = ctx.get_hover_element()
@@ -284,7 +283,7 @@ class FeatureShowcase(ShowBase):
             self._last_focus_id = focus_id
             self._set("ctx-focus", f'"{focus_id}"' if focus_id else "(none)")
 
-        # B3 — num_documents (includes debugger docs)
+        # num_documents (includes debugger docs)
         self._set("ctx-numdocs", str(ctx.get_num_documents()))
 
     def _set(self, key, text):

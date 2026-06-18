@@ -175,13 +175,15 @@ do_transmit_data(DataGraphTraverser *, const DataNodeTransmit &input,
 
       switch (be._type) {
       case ButtonEvent::T_down:
-        if (be._button == KeyboardButton::control()) {
+        // matches() (not ==) so that lcontrol/lshift/etc. resolve to their
+        // generic control/shift/... alias; == compares only the button index.
+        if (be._button.matches(KeyboardButton::control())) {
           _modifiers |= KM_CTRL;
-        } else if (be._button == KeyboardButton::shift()) {
+        } else if (be._button.matches(KeyboardButton::shift())) {
           _modifiers |= KM_SHIFT;
-        } else if (be._button == KeyboardButton::alt()) {
+        } else if (be._button.matches(KeyboardButton::alt())) {
           _modifiers |= KM_ALT;
-        } else if (be._button == KeyboardButton::meta()) {
+        } else if (be._button.matches(KeyboardButton::meta())) {
           _modifiers |= KM_META;
         } else if (be._button == MouseButton::wheel_up()) {
           _wheel_delta -= 1.0f;
@@ -208,13 +210,13 @@ do_transmit_data(DataGraphTraverser *, const DataNodeTransmit &input,
         break;
 
       case ButtonEvent::T_up:
-        if (be._button == KeyboardButton::control()) {
+        if (be._button.matches(KeyboardButton::control())) {
           _modifiers &= ~KM_CTRL;
-        } else if (be._button == KeyboardButton::shift()) {
+        } else if (be._button.matches(KeyboardButton::shift())) {
           _modifiers &= ~KM_SHIFT;
-        } else if (be._button == KeyboardButton::alt()) {
+        } else if (be._button.matches(KeyboardButton::alt())) {
           _modifiers &= ~KM_ALT;
-        } else if (be._button == KeyboardButton::meta()) {
+        } else if (be._button.matches(KeyboardButton::meta())) {
           _modifiers &= ~KM_META;
         } else if (be._button == MouseButton::one()) {
           _mouse_button_events.push_back({0, false});

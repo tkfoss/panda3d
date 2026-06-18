@@ -16,8 +16,15 @@
 
 #include "pandabase.h"
 #include "notifyCategoryProxy.h"
+#include "configVariableDouble.h"
 
 NotifyCategoryDecl(rmlui, EXPCL_PANDARMUI, EXPTP_PANDARMUI);
+
+// Stem-darkening exponent applied to the alpha coverage of generated font
+// glyph atlases.  1.0 leaves FreeType's anti-aliasing unchanged; values > 1.0
+// thicken/darken glyph edges, giving text more weight (closer to the heavier
+// font smoothing of native macOS / Windows text).  Defaults to 1.0 (off).
+extern ConfigVariableDouble rmlui_text_gamma;
 
 extern EXPCL_PANDARMUI void init_librmlui();
 

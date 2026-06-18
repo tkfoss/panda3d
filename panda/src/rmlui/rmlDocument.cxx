@@ -20,9 +20,8 @@
  */
 void RmlDocument::
 show() {
-  if (_doc != nullptr) {
-    _doc->Show();
-  }
+  nassertv(_doc != nullptr);
+  _doc->Show();
 }
 
 /**
@@ -30,9 +29,8 @@ show() {
  */
 void RmlDocument::
 hide() {
-  if (_doc != nullptr) {
-    _doc->Hide();
-  }
+  nassertv(_doc != nullptr);
+  _doc->Hide();
 }
 
 /**
@@ -57,9 +55,7 @@ close() {
  */
 PT(RmlElement) RmlDocument::
 get_element_by_id(const std::string &id) {
-  if (_doc == nullptr) {
-    return nullptr;
-  }
+  nassertr(_doc != nullptr, nullptr);
   Rml::Element *el = _doc->GetElementById(id);
   if (el == nullptr) {
     return nullptr;
@@ -72,9 +68,7 @@ get_element_by_id(const std::string &id) {
  */
 std::string RmlDocument::
 get_title() const {
-  if (_doc == nullptr) {
-    return std::string();
-  }
+  nassertr(_doc != nullptr, std::string());
   return _doc->GetTitle();
 }
 
@@ -83,9 +77,8 @@ get_title() const {
  */
 void RmlDocument::
 set_title(const std::string &title) {
-  if (_doc != nullptr) {
-    _doc->SetTitle(title);
-  }
+  nassertv(_doc != nullptr);
+  _doc->SetTitle(title);
 }
 
 /**

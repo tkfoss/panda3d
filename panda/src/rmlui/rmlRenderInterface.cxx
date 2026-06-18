@@ -408,10 +408,12 @@ ensure_shaders() {
     ColorAttrib::make_vertex()
   );
 
+  // Premultiplied-alpha "over": layer buffers hold premultiplied content (drawn
+  // with the O_one net_state blend), so composite them with src factor O_one.
   auto blend_over = [&]() {
     return base->add_attrib(ColorBlendAttrib::make(
       ColorBlendAttrib::M_add,
-      ColorBlendAttrib::O_incoming_alpha,
+      ColorBlendAttrib::O_one,
       ColorBlendAttrib::O_one_minus_incoming_alpha));
   };
   auto blend_replace = [&]() {
@@ -568,13 +570,18 @@ render(Rml::Context *context, CullTraverser *trav,
   _thread = current_thread;
 
   _net_transform = trav->get_world_transform();
+  // RmlUi v6 outputs premultiplied alpha (vertex colours are ColourbPremultiplied
+  // and font/image textures are premultiplied), so blend with src factor O_one,
+  // matching the reference backends' glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA).
+  // Using O_incoming_alpha here would multiply RGB by alpha a second time,
+  // darkening anti-aliased glyph edges.
   _net_state = RenderState::make(
     CullBinAttrib::make("unsorted", 0),
     DepthTestAttrib::make(RenderAttrib::M_none),
     DepthWriteAttrib::make(DepthWriteAttrib::M_off),
     ColorBlendAttrib::make(
       ColorBlendAttrib::M_add,
-      ColorBlendAttrib::O_incoming_alpha,
+      ColorBlendAttrib::O_one,
       ColorBlendAttrib::O_one_minus_incoming_alpha),
     ColorAttrib::make_vertex()
   );
@@ -784,8 +791,24 @@ LoadTexture(Rml::Vector2i &texture_dimensions, const Rml::String &source) {
       unsigned char *b = data + (ysize - 1 - y) * row;
       for (int x = 0; x < row; ++x) std::swap(a[x], b[x]);
     }
+
+    // RmlUi v6 blends in premultiplied-alpha space (see the _net_state blend in
+    // render()).  TexturePool loads straight (non-premultiplied) RGBA, so
+    // premultiply RGB by alpha here for 8-bit 4-component images.  Panda stores
+    // BGRA on little-endian; the alpha byte is the last component regardless.
+    if (tex->get_num_components() == 4 && tex->get_component_width() == 1) {
+      for (int i = 0; i < ysize * row; i += 4) {
+        unsigned int alpha = data[i + 3];
+        data[i + 0] = (unsigned char)((data[i + 0] * alpha + 127) / 255);
+        data[i + 1] = (unsigned char)((data[i + 1] * alpha + 127) / 255);
+        data[i + 2] = (unsigned char)((data[i + 2] * alpha + 127) / 255);
+      }
+    }
   }
 
+  // Nearest filtering keeps pixel-art UI sprites (icons, slices) crisp at or
+  // near their native size; linear would smear them.  (The font atlas, by
+  // contrast, uses linear in GenerateTexture for smooth glyph anti-aliasing.)
   tex->set_minfilter(SamplerState::FT_nearest);
   tex->set_magfilter(SamplerState::FT_nearest);
 
@@ -807,6 +830,22 @@ GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dims) {
   tex->setup_2d_texture(dims.x, dims.y, Texture::T_unsigned_byte, Texture::F_rgba);
   tex->set_size_padded(dims.x, dims.y);
 
+  // Optional stem darkening: build a 256-entry alpha remap LUT applying
+  // coverage^(1/gamma).  gamma == 1.0 leaves the data untouched (identity LUT).
+  // Glyph atlases are premultiplied with rgb == alpha (mono glyphs) or already
+  // premultiplied colour, so remapping all four channels by the alpha's scale
+  // factor preserves premultiplication and thickens anti-aliased edges.
+  const double gamma = rmlui_text_gamma;
+  unsigned char alpha_lut[256];
+  const bool remap = (gamma > 1.0001 || gamma < 0.9999);
+  if (remap) {
+    const double inv_gamma = 1.0 / gamma;
+    for (int a = 0; a < 256; ++a) {
+      double v = std::pow(a / 255.0, inv_gamma);
+      alpha_lut[a] = (unsigned char)(v * 255.0 + 0.5);
+    }
+  }
+
   PTA_uchar img = tex->modify_ram_image();
   size_t src_stride = dims.x * 4;
   size_t dst_stride = tex->get_x_size() * 4;
@@ -816,14 +855,24 @@ GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i dims) {
   // No Y-flip: make_geom passes tex_coords verbatim (CSS y-down convention).
   for (int y = 0; y < dims.y; ++y, src += src_stride, dst += dst_stride) {
     for (size_t i = 0; i < src_stride; i += 4) {
-      dst[i + 0] = src[i + 2]; dst[i + 1] = src[i + 1];
-      dst[i + 2] = src[i + 0]; dst[i + 3] = src[i + 3];
+      unsigned char r = src[i + 2], g = src[i + 1], b = src[i + 0], a = src[i + 3];
+      if (remap && a != 0) {
+        // Scale every (premultiplied) channel by the alpha's remap ratio.
+        unsigned int scale = ((unsigned int)alpha_lut[a] << 8) / a;  // 8.8 fixed
+        r = (unsigned char)std::min(255u, (r * scale) >> 8);
+        g = (unsigned char)std::min(255u, (g * scale) >> 8);
+        b = (unsigned char)std::min(255u, (b * scale) >> 8);
+        a = alpha_lut[a];
+      }
+      dst[i + 0] = r; dst[i + 1] = g; dst[i + 2] = b; dst[i + 3] = a;
     }
   }
   tex->set_wrap_u(SamplerState::WM_clamp);
   tex->set_wrap_v(SamplerState::WM_clamp);
-  tex->set_minfilter(SamplerState::FT_nearest);
-  tex->set_magfilter(SamplerState::FT_nearest);
+  // Linear filtering keeps anti-aliased font glyphs smooth; the reference
+  // backends use GL_LINEAR here too.  Nearest sampling makes text look jagged.
+  tex->set_minfilter(SamplerState::FT_linear);
+  tex->set_magfilter(SamplerState::FT_linear);
   tex->ref();
   return (Rml::TextureHandle)tex.p();
 }
@@ -1181,9 +1230,11 @@ apply_filters(PT(Texture) src,
           CPT(RenderAttrib) osa = over_st->get_attrib(ShaderAttrib::get_class_slot());
           osa = DCAST(ShaderAttrib, osa)->set_shader_input(
             InternalName::make("u_blend_factor"), LVecBase4f(1.f, 0.f, 0.f, 0.f));
+          // Premultiplied "over": the layer texture is premultiplied, so the
+          // source factor is O_one.
           over_st = over_st->add_attrib(osa)->add_attrib(
             ColorBlendAttrib::make(ColorBlendAttrib::M_add,
-                                   ColorBlendAttrib::O_incoming_alpha,
+                                   ColorBlendAttrib::O_one,
                                    ColorBlendAttrib::O_one_minus_incoming_alpha));
           composite_quad(over_st, ping);
 
