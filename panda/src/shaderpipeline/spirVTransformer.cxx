@@ -115,13 +115,30 @@ run(SpirVTransformPass &pass) {
   for (const auto &pair : pass._deleted_members) {
     SpirVResultDatabase::Definition &def = _db.modify_definition(pair.first);
 
-    for (size_t i = 0; i < def._members.size();) {
-      if (pair.second.count(i)) {
-        def._members.erase(def._members.begin() + i);
-        nassertd(def._members[i]._new_index == (int)i) continue;
+    // pair.second holds the *original* member indices that were deleted.  Erase
+    // them from the back so that erasing one does not shift the positions of
+    // the others still to be removed (erasing front-to-back would make the
+    // running index alias surviving members and delete the wrong ones).
+    //
+    // A pass may already have compacted _members itself (e.g. the struct-
+    // resource hoisting pass removes every member of an all-resource struct in
+    // place while still recording the deletions here), so an index may already
+    // be out of range.  Skip those rather than erasing the wrong member.
+    for (auto it = pair.second.rbegin(); it != pair.second.rend(); ++it) {
+      size_t index = *it;
+      if (index < def._members.size()) {
+        def._members.erase(def._members.begin() + index);
       }
-      ++i;
     }
+
+    // After compaction, each surviving member's tracked _new_index must equal
+    // its actual position (delete_struct_member() decremented _new_index as
+    // members were removed).
+#ifndef NDEBUG
+    for (size_t i = 0; i < def._members.size(); ++i) {
+      nassertd(def._members[i]._new_index == (int)i) continue;
+    }
+#endif
   }
 }
 

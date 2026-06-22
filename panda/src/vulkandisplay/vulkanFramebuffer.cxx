@@ -104,7 +104,8 @@ destroy(VulkanGraphicsStateGuardian *vkgsg) {
  * applying the clear settings from the given region.  Returns true on success.
  */
 bool VulkanFramebuffer::
-begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region) {
+begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region,
+                bool resume, bool cumulative) {
   VulkanCommandBuffer &cmd = vkgsg->_render_cmd;
   nassertr((VkCommandBuffer)cmd != VK_NULL_HANDLE, false);
 
@@ -156,9 +157,16 @@ begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region) {
       }
 
       if (tc->_aspect_mask & VK_IMAGE_ASPECT_DEPTH_BIT) {
-        if (region->get_clear_active(DrawableRegion::RTP_depth)) {
+        if (resume) {
+          // Resuming a render pass that was suspended (e.g. around a compute
+          // dispatch): keep whatever was already rendered.
+          depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        } else if (region->get_clear_active(DrawableRegion::RTP_depth)) {
           depth_attachment.clearValue.depthStencil.depth = region->get_clear_depth();
           depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        } else if (cumulative) {
+          // Cumulative RTT: preserve the texture's previous contents.
+          depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         } else {
           depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         }
@@ -172,9 +180,14 @@ begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region) {
       }
 
       if (tc->_aspect_mask & VK_IMAGE_ASPECT_STENCIL_BIT) {
-        if (region->get_clear_active(DrawableRegion::RTP_stencil)) {
+        if (resume) {
+          stencil_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        } else if (region->get_clear_active(DrawableRegion::RTP_stencil)) {
           stencil_attachment.clearValue.depthStencil.stencil = region->get_clear_stencil();
           stencil_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        } else if (cumulative) {
+          // Cumulative RTT: preserve the texture's previous contents.
+          stencil_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         } else {
           stencil_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         }
@@ -207,13 +220,18 @@ begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region) {
         color_attachments[render_info.colorAttachmentCount++];
       color_attachment = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
 
-      if (region->get_clear_active(DrawableRegion::RTP_color)) {
+      if (resume) {
+        color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+      } else if (region->get_clear_active(DrawableRegion::RTP_color)) {
         LColor clear_color = region->get_clear_value(DrawableRegion::RTP_color);
         color_attachment.clearValue.color.float32[0] = clear_color[0];
         color_attachment.clearValue.color.float32[1] = clear_color[1];
         color_attachment.clearValue.color.float32[2] = clear_color[2];
         color_attachment.clearValue.color.float32[3] = clear_color[3];
         color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      } else if (cumulative) {
+        // Cumulative RTT: preserve the texture's previous contents.
+        color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
       } else {
         color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       }
@@ -250,6 +268,12 @@ begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region) {
   cmd.flush_barriers();
   vkgsg->_vkCmdBeginRendering(cmd, &render_info);
   vkgsg->_fb_config = _config_id;
+
+  // Record the active render pass so that dispatch_compute() can suspend and
+  // resume it (a compute dispatch is not allowed inside a dynamic render pass).
+  vkgsg->_in_render_pass = true;
+  vkgsg->_render_pass_fb = this;
+  vkgsg->_render_pass_region = region;
   return true;
 }
 
@@ -262,6 +286,9 @@ void VulkanFramebuffer::
 end_rendering(VulkanGraphicsStateGuardian *vkgsg) {
   VulkanCommandBuffer &cmd = vkgsg->_render_cmd;
   vkgsg->_vkCmdEndRendering(cmd);
+  vkgsg->_in_render_pass = false;
+  vkgsg->_render_pass_fb = nullptr;
+  vkgsg->_render_pass_region = nullptr;
 
   for (Attachment &attach : _attachments) {
     VkPipelineStageFlags2 write_stage_mask;

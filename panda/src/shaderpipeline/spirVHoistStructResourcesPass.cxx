@@ -170,7 +170,20 @@ transform_definition_op(Instruction op) {
 
   case spv::OpVariable:
     if (op.nargs >= 3) {
-      uint32_t type_id = unwrap_pointer_type(op.args[0]);
+      // The variable's pointer type may itself have been deleted: this happens
+      // when the pointee struct contained only resources, so it became empty
+      // and was removed (which in turn deleted the OpTypePointer that referenced
+      // it).  unwrap_pointer_type() asserts the pointer type is still defined in
+      // this pass, which is false for a deleted pointer type, so read the
+      // pointee type id straight from the database instead -- the definition is
+      // retained even after delete_id().  We still need it to look up the
+      // hoisted members below, and to delete this variable.
+      const Definition &ptr_def = _db.get_definition(op.args[0]);
+      if (!ptr_def.is_pointer_type()) {
+        error_expected(op.args[0], "a pointer type");
+        return true;
+      }
+      uint32_t type_id = ptr_def._type_id;
       auto ait = _affected_types.find(type_id);
       if (ait != _affected_types.end()) {
         uint32_t var_id = op.args[1];
@@ -265,7 +278,20 @@ transform_function_op(Instruction op) {
       uint32_t result_pointer_type_id = op.args[0];
       uint32_t result_type_id = unwrap_pointer_type(result_pointer_type_id);
 
-      uint32_t parent_id = unwrap_pointer_type(get_type_id(op.args[2]));
+      // The base of the access chain may be a variable whose struct contained
+      // only resources: that struct (and its pointer type) was deleted, and the
+      // variable along with it, because all its members were hoisted to global
+      // scope.  In that case get_type_id() / unwrap_pointer_type() would assert
+      // (the pointer type is no longer defined in this pass), so resolve the
+      // pointee struct type straight from the database, whose definitions are
+      // retained after delete_id().  We still need the struct type id below to
+      // walk the chain and substitute the hoisted variable.
+      uint32_t parent_id;
+      if (is_deleted(op.args[2])) {
+        parent_id = _db.get_definition(_db.get_definition(op.args[2])._type_id)._type_id;
+      } else {
+        parent_id = unwrap_pointer_type(get_type_id(op.args[2]));
+      }
 
       if (is_deleted(result_type_id)) {
         // Empty struct, so access chain must also be deleted.

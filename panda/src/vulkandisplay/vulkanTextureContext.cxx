@@ -59,6 +59,110 @@ needs_recreation() const {
 }
 
 /**
+ * Returns an image view addressing a single mip level (and optionally a single
+ * array layer) of this image, for binding as a storage image (image2D etc).
+ * Created on demand and cached, keyed by (view, mip, layer).
+ *
+ * mip is the mip level to address (clamped into range; <0 treated as 0).
+ * layer >= 0 selects a single array layer / cube face / z-slice; layer < 0
+ * keeps all layers (a layered view).
+ *
+ * This exists because a shader image input bound with a specific mip/z (e.g.
+ * RenderPipeline's bloom downsample/upsample pyramid, or its prefiltered IBL
+ * cubemap) must imageStore into exactly that subresource; get_image_view()
+ * returns the whole-image view (baseMipLevel 0, all levels), which would send
+ * every store to mip 0 and leave the other levels unwritten.
+ */
+VkImageView VulkanTextureContext::
+get_storage_image_view(VkDevice device, int view, int mip, int layer) {
+  if (_image == VK_NULL_HANDLE) {
+    return VK_NULL_HANDLE;
+  }
+
+  mip = std::min(std::max(mip, 0), (int)_mip_levels - 1);
+
+  // Each "view" of a multiview texture occupies its own contiguous block of
+  // array layers (see create_texture); fold the view offset into the layer.
+  uint32_t layers_per_view = (view >= 0 && _array_layers > 0)
+    ? _array_layers / std::max(1u, (uint32_t)get_texture()->get_num_views())
+    : _array_layers;
+  if (layers_per_view == 0) {
+    layers_per_view = _array_layers;
+  }
+  uint32_t base_layer = (uint32_t)std::max(view, 0) * layers_per_view;
+
+  bool single_layer = (layer >= 0);
+  if (single_layer) {
+    base_layer += (uint32_t)layer;
+  }
+
+  uint64_t key = ((uint64_t)(uint32_t)std::max(view, 0) << 40)
+               | ((uint64_t)(uint32_t)mip << 20)
+               | (uint64_t)(uint32_t)(layer + 1); // +1 so layer == -1 is distinct from 0
+  auto it = _storage_image_views.find(key);
+  if (it != _storage_image_views.end()) {
+    return it->second;
+  }
+
+  VkImageViewCreateInfo view_info;
+  view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view_info.pNext = nullptr;
+  view_info.flags = 0;
+  view_info.image = _image;
+
+  // A storage image is addressed as a non-arrayed 2D/3D/1D image when a single
+  // layer is selected; otherwise as the layered type matching the texture.
+  switch (get_texture()->get_texture_type()) {
+  case Texture::TT_1d_texture:
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_1D;
+    break;
+  case Texture::TT_3d_texture:
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_3D;
+    break;
+  case Texture::TT_2d_texture_array:
+  case Texture::TT_cube_map:
+  case Texture::TT_cube_map_array:
+  case Texture::TT_1d_texture_array:
+    view_info.viewType = single_layer ? VK_IMAGE_VIEW_TYPE_2D
+                                      : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    break;
+  default:
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    break;
+  }
+
+  view_info.format = _format;
+  view_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  view_info.subresourceRange.aspectMask = _aspect_mask;
+  view_info.subresourceRange.baseMipLevel = (uint32_t)mip;
+  view_info.subresourceRange.levelCount = 1;
+  view_info.subresourceRange.baseArrayLayer = base_layer;
+  view_info.subresourceRange.layerCount =
+    single_layer ? 1 : (layers_per_view > 0 ? layers_per_view : VK_REMAINING_ARRAY_LAYERS);
+
+  VkImageView image_view = VK_NULL_HANDLE;
+  VkResult err = vkCreateImageView(device, &view_info, nullptr, &image_view);
+  if (err) {
+    vulkan_error(err, "Failed to create storage image view");
+    return VK_NULL_HANDLE;
+  }
+
+  _storage_image_views[key] = image_view;
+  if (getenv("DBG_BLOOM_MIP")) {
+    fprintf(stderr, "[DBG_SIV] created storage view '%s' view=%d mip=%d layer=%d "
+            "baseLayer=%u layerCount=%u (mip_levels=%u array_layers=%u)\n",
+            get_texture() ? get_texture()->get_name().c_str() : "?",
+            view, mip, layer, base_layer,
+            view_info.subresourceRange.layerCount, _mip_levels, _array_layers);
+    fflush(stderr);
+  }
+  return image_view;
+}
+
+/**
  * Schedules the deletion of the image resources for the end of the frame.
  */
 void VulkanTextureContext::
@@ -90,6 +194,11 @@ release(VulkanFrameData &frame_data) {
 
     _image_views.clear();
   }
+
+  for (const auto &item : _storage_image_views) {
+    frame_data._pending_destroy_image_views.push_back(item.second);
+  }
+  _storage_image_views.clear();
 
   if (_buffer != VK_NULL_HANDLE) {
     frame_data._pending_destroy_buffers.push_back(_buffer);
@@ -128,6 +237,19 @@ release(VulkanFrameData &frame_data) {
 
   _format = VK_FORMAT_UNDEFINED;
   _layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  // Reset the cross-frame barrier-tracking state too: it described the image we
+  // just released.  Leaving _write_seq/_read_seq/stage+access masks pointing at
+  // the destroyed image's history makes the next add_barrier() compute its
+  // srcStageMask from stale masks, and a stale _hoisted_barrier_exists=true can
+  // mis-modify a barrier index belonging to a prior command buffer.  (oldLayout
+  // is UNDEFINED above so it stays spec-legal, but this keeps it clean.)
+  _read_seq = 0;
+  _write_seq = 0;
+  _hoisted_barrier_exists = false;
+  _write_access_mask = 0;
+  _write_stage_mask = 0;
+  _read_stage_mask = 0;
 }
 
 /**
@@ -139,6 +261,11 @@ destroy_now(VkDevice device) {
     vkDestroyImageView(device, image_view, nullptr);
   }
   _image_views.clear();
+
+  for (const auto &item : _storage_image_views) {
+    vkDestroyImageView(device, item.second, nullptr);
+  }
+  _storage_image_views.clear();
 
   if (_image != VK_NULL_HANDLE) {
     vkDestroyImage(device, _image, nullptr);

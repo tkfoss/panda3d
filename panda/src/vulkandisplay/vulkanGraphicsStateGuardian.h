@@ -23,6 +23,7 @@
 #include "circularAllocator.h"
 #include "completionToken.h"
 
+class DrawableRegion;
 class VulkanBufferContext;
 class VulkanGraphicsPipe;
 class VulkanIndexBufferContext;
@@ -234,6 +235,9 @@ public:
     DS_SET_COUNT = 5,
   };
 
+  VkDescriptorPool make_descriptor_pool() const;
+  bool allocate_descriptor_set(VkDescriptorSetLayout layout, VkDescriptorSet &out);
+
   bool get_attrib_descriptor_set(VkDescriptorSet &out,
                                  VulkanShaderContext::AttribDescriptorSetMap &map,
                                  VkDescriptorSetLayout layout,
@@ -279,6 +283,9 @@ private:
   pvector<VkRect2D> _viewports;
   VkPipelineCache _pipeline_cache = VK_NULL_HANDLE;
   VkDescriptorPool _descriptor_pool = VK_NULL_HANDLE;
+  // Older descriptor pools that filled up and were replaced; kept alive (sets
+  // allocated from them are still in use) and destroyed at GSG teardown.
+  pvector<VkDescriptorPool> _retired_descriptor_pools;
   VulkanShaderContext *_default_sc = nullptr;
   Shader *_current_shader = nullptr;
   VulkanShaderContext *_current_sc = nullptr;
@@ -330,6 +337,12 @@ private:
   VulkanTextureContext *_fb_depth_tc = nullptr;
   uint32_t _fb_config = 0;
   pvector<FbConfig> _fb_configs;
+
+  // Tracks the active dynamic render pass so dispatch_compute() can suspend it
+  // (a compute dispatch must not be recorded inside vkCmdBeginRendering).
+  bool _in_render_pass = false;
+  VulkanFramebuffer *_render_pass_fb = nullptr;
+  DrawableRegion *_render_pass_region = nullptr;
 
   // Current depth range as applied by DepthOffsetAttrib
   CPT(DepthOffsetAttrib) _current_depth_range_attrib;

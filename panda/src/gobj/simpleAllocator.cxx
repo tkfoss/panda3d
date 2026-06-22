@@ -117,7 +117,12 @@ do_alloc(size_t size, size_t alignment) {
     // Scan until we have reached the last allocated block.
     while (block->_next != this) {
       SimpleAllocatorBlock *next = (SimpleAllocatorBlock *)block->_next;
-      size_t start = end + ((alignment - end) % alignment);
+      // Round end up to the next multiple of alignment.  Note: the old form
+      // end + ((alignment - end) % alignment) relies on unsigned wraparound
+      // being mod alignment, which only holds when alignment is a power of two
+      // (2^64 % alignment == 0); for non-pow2 alignment it produces a
+      // misaligned start.  This form is correct for any alignment >= 1.
+      size_t start = ((end + alignment - 1) / alignment) * alignment;
       if (start + size <= next->_start) {
         SimpleAllocatorBlock *new_block = make_block(start, size);
         nassertr(new_block->get_allocator() == this, nullptr);
@@ -144,8 +149,8 @@ do_alloc(size_t size, size_t alignment) {
     }
   }
 
-  // No free blocks; check for room at the end.
-  size_t start = end + ((alignment - end) % alignment);
+  // No free blocks; check for room at the end.  (See note above on alignment.)
+  size_t start = ((end + alignment - 1) / alignment) * alignment;
   if (start + size <= _max_size) {
     SimpleAllocatorBlock *new_block = make_block(start, size);
     nassertr(new_block->get_allocator() == this, nullptr);

@@ -17,6 +17,7 @@
 #include "config_vulkandisplay.h"
 #include "textureContext.h"
 #include "small_vector.h"
+#include "pmap.h"
 
 class VulkanCommandBuffer;
 
@@ -37,6 +38,16 @@ public:
 
   INLINE VkImageView get_image_view(int view) const;
   INLINE VkBufferView get_buffer_view(int view) const;
+
+  // Returns (creating + caching on demand) an image view that addresses a
+  // single mip level (and optionally a single array layer / z-slice) of this
+  // image, for binding as a storage image (image2D etc).  mip >= 0 selects a
+  // level; layer >= 0 selects a single layer (layer < 0 keeps all layers).
+  // This is needed because a shader input bound with a mip/z (e.g. RP's bloom
+  // mip pyramid) must write to exactly that subresource, not mip 0 of the whole
+  // image (which get_image_view returns).
+  VkImageView get_storage_image_view(VkDevice device, int view, int mip,
+                                     int layer);
 
   INLINE void mark_read(uint64_t seq);
   INLINE void discard();
@@ -64,6 +75,10 @@ public:
   // image and image view or buffer and buffer view will be set.
   VkImage _image = VK_NULL_HANDLE;
   small_vector<VkImageView> _image_views;
+  // Single-subresource views for storage-image binding, created on demand and
+  // keyed by (view, mip, layer) -- see get_storage_image_view().  Destroyed in
+  // release()/destroy_now() alongside _image_views.
+  pmap<uint64_t, VkImageView> _storage_image_views;
   VkBuffer _buffer = VK_NULL_HANDLE;
   small_vector<VkBufferView> _buffer_views;
   VulkanMemoryBlock _block;

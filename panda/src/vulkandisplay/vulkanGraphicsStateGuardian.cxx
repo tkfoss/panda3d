@@ -39,6 +39,47 @@
 #include "pointLight.h"
 #include "paramTexture.h"
 
+// ---------------------------------------------------------------------------
+// GPU-hang submit tracer.  When the env var TMO_SUBMIT_TRACE is set, every
+// vkQueueSubmit2 is bracketed by a line written and fsync'd to that file BEFORE
+// the submit and another AFTER it returns.  Because a MoltenVK/Metal GPU hang
+// can freeze (and force a reboot of) the whole machine, ordinary stdout/stderr
+// logs are lost.  fsync'ing each line means the file on disk survives the
+// freeze, so the last "SUBMIT" line with no matching "DONE" names the command
+// buffer that hung.  Zero cost (a single env lookup, cached) when off.
+// ---------------------------------------------------------------------------
+#include <cstdio>
+#include <cstdarg>
+#ifndef _WIN32
+#include <unistd.h>  // fsync
+#endif
+
+static FILE *_tmo_submit_trace_fp = (FILE *)-1;  // -1 = not yet resolved
+
+static FILE *tmo_submit_trace_file() {
+  if (_tmo_submit_trace_fp == (FILE *)-1) {
+    const char *path = getenv("TMO_SUBMIT_TRACE");
+    _tmo_submit_trace_fp = (path && path[0]) ? fopen(path, "w") : nullptr;
+  }
+  return _tmo_submit_trace_fp;
+}
+
+// Non-static so vulkanGraphicsBuffer.cxx (earlier in the composite) can log
+// which named output it is rendering, via a forward prototype there.
+void tmo_submit_trace(const char *fmt, ...) {
+  FILE *fp = tmo_submit_trace_file();
+  if (fp == nullptr) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(fp, fmt, ap);
+  va_end(ap);
+  fputc('\n', fp);
+  fflush(fp);
+#ifndef _WIN32
+  fsync(fileno(fp));  // force the bytes to the platter before we risk a hang
+#endif
+}
+
 static const std::string default_vshader =
   "#version 330\n"
   "in vec4 p3d_Vertex;\n"
@@ -451,28 +492,8 @@ reset() {
     vulkan_error(err, "Failed to create pipeline cache");
   }
 
-  //TODO: dynamic allocation, create more pools if we run out
-  VkDescriptorPoolSize pool_sizes[] = {
-    {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096},
-    {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 512},
-    {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 256},
-    {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 256},
-    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 256},
-    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 256},
-    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 128},
-  };
-
-  VkDescriptorPoolCreateInfo pool_info;
-  pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  pool_info.pNext = nullptr;
-  pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-  pool_info.maxSets = 1024;
-  pool_info.poolSizeCount = sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize);
-  pool_info.pPoolSizes = pool_sizes;
-
-  err = vkCreateDescriptorPool(_device, &pool_info, nullptr, &_descriptor_pool);
-  if (err) {
-    vulkan_error(err, "Failed to create descriptor pool");
+  _descriptor_pool = make_descriptor_pool();
+  if (_descriptor_pool == VK_NULL_HANDLE) {
     return;
   }
 
@@ -917,6 +938,10 @@ destroy_device() {
   vkDestroyDescriptorSetLayout(_device, _global_descriptor_set_layout, nullptr);
   vkDestroyDescriptorSetLayout(_device, _lattr_descriptor_set_layout, nullptr);
   vkDestroyDescriptorPool(_device, _descriptor_pool, nullptr);
+  for (VkDescriptorPool pool : _retired_descriptor_pools) {
+    vkDestroyDescriptorPool(_device, pool, nullptr);
+  }
+  _retired_descriptor_pools.clear();
   vkDestroySampler(_device, _shadow_sampler, nullptr);
   vkDestroyPipelineCache(_device, _pipeline_cache, nullptr);
   vkDestroyCommandPool(_device, _cmd_pool, nullptr);
@@ -1338,6 +1363,11 @@ create_texture(VulkanTextureContext *tc) {
 
     case VK_FORMAT_B8G8R8_SINT:
       format = VK_FORMAT_R8G8B8A8_SINT;
+      pack_bgr8 = true;
+      break;
+
+    case VK_FORMAT_B8G8R8_SRGB:
+      format = VK_FORMAT_R8G8B8A8_SRGB;
       pack_bgr8 = true;
       break;
 
@@ -2922,12 +2952,54 @@ dispatch_compute(int num_groups_x, int num_groups_y, int num_groups_z) {
 
   //TODO: must actually be outside render pass, and on a queue that supports
   // compute.  Should we have separate pool/queue/buffer for compute?
+  // A compute dispatch is not permitted inside a dynamic render pass
+  // (vkCmdBeginRendering..vkCmdEndRendering).  Panda issues compute via a draw
+  // callback (ComputeNode), which runs while the target's render pass is active,
+  // so we must suspend that render pass around the dispatch and resume it
+  // afterwards (resuming with LOAD ops so any already-rendered content in the
+  // target is preserved).  Without this, MoltenVK/Metal cannot encode the
+  // dispatch inside the render encoder and the compute work is silently dropped
+  // -- which breaks every compute-driven stage (e.g. RenderPipeline's scattering
+  // precompute, light culling and env-map generation).
+  bool suspended = false;
+  VulkanFramebuffer *fb = _render_pass_fb;
+  DrawableRegion *region = _render_pass_region;
+  if (_in_render_pass) {
+    nassertv(fb != nullptr);
+    fb->end_rendering(this);
+    suspended = true;
+  }
+
   VkPipeline pipeline = _current_sc->get_compute_pipeline(this);
   nassertv(pipeline != VK_NULL_HANDLE);
   _vkCmdBindPipeline(_render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
   _render_cmd.flush_barriers();
 
   vkCmdDispatch(_render_cmd, num_groups_x, num_groups_y, num_groups_z);
+
+  // Make the compute shader's writes (to storage images/buffers) visible to
+  // subsequent stages.  This is required for BOTH dispatch paths:
+  //  - the in-scene-graph ComputeNode path (suspended==true): the following
+  //    draws in the resumed render pass, or a later stage, read these writes;
+  //  - the standalone GraphicsEngine.dispatch_compute path (suspended==false,
+  //    e.g. RenderPipeline's scattering precompute, which runs begin_frame /
+  //    dispatch / end_frame with no render pass): the writes (its 3D-LUT storage
+  //    images) are sampled by later frames/stages.  Without this barrier those
+  //    reads get undefined/stale data -- the scattering sun/sky stayed black.
+  VkMemoryBarrier2 barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+  barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+  barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+  barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+  VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+  dep.memoryBarrierCount = 1;
+  dep.pMemoryBarriers = &barrier;
+  vkCmdPipelineBarrier2(_render_cmd, &dep);
+
+  if (suspended) {
+    // Resume the suspended render pass.
+    fb->begin_rendering(this, region, true);
+  }
 }
 
 /**
@@ -3039,9 +3111,13 @@ set_state_and_transform(const RenderState *state,
                                   sc->_tattr_descriptor_set_map,
                                   sc->_tattr_descriptor_set_layout,
                                   target_texture)) {
+      tmo_submit_trace("      UPDATE-TATTR (set rebuilt -> use_texture runs)");
       sc->update_tattr_descriptor_set(this, descriptor_sets[DS_texture_attrib]);
+    } else {
+      tmo_submit_trace("      TATTR cached (update SKIPPED, no barrier)");
     }
   } else {
+    tmo_submit_trace("      TATTR gate-skip (same texattr, no use_texture)");
     first_set = DS_texture_attrib + 1;
   }
 
@@ -3051,10 +3127,14 @@ set_state_and_transform(const RenderState *state,
                                   sc->_sattr_descriptor_set_map,
                                   sc->_sattr_descriptor_set_layout,
                                   _target_shader)) {
+      tmo_submit_trace("      UPDATE-SATTR (set rebuilt -> use_texture runs)");
       sc->update_sattr_descriptor_set(this, descriptor_sets[DS_shader_attrib]);
+    } else {
+      tmo_submit_trace("      SATTR cached (update SKIPPED, no barrier)");
     }
     _state_shader = _target_shader;
   } else {
+    tmo_submit_trace("      SATTR gate-skip (same shader, no use_texture)");
     first_set = DS_shader_attrib + 1;
   }
 
@@ -3193,17 +3273,56 @@ prepare_display_region(DisplayRegionPipelineReader *dr) {
   PN_stdfloat min_depth, max_depth;
   dr->get_depth_range(min_depth, max_depth);
 
+  // Vulkan's scissor (and viewport origin) are measured from the TOP-LEFT of the
+  // framebuffer, whereas get_region_pixels() returns a bottom-left origin (the GL
+  // convention).  Use get_region_pixels_i(), which returns the top-left origin
+  // directly, so multi-region display regions are placed correctly.
+  //
+  // The GL->Vulkan vertical flip is done here with a negative-height viewport
+  // (VK_KHR_maintenance1 / Vulkan 1.1, supported on MoltenVK), NOT in the
+  // projection matrix (see calc_projection_mat).  A negative-height viewport
+  // flips Y at rasterization for *every* primitive -- including shaders that
+  // write gl_Position without going through the projection matrix.  When the
+  // scene is already inverted (rendering into a flipped target), we don't flip.
+  // The GL->Vulkan vertical flip is done with a negative-height viewport, gated
+  // on whether this render target is itself "inverted".  We must read the flag
+  // from the OUTPUT being rendered (dr->get_window()->get_inverted()), NOT from
+  // _scene_setup: prepare_display_region() runs BEFORE set_scene() installs the
+  // current pass's SceneSetup, so _scene_setup here still holds the PREVIOUS
+  // pass's value (the inverted flag is set in setup_scene(), which runs after
+  // this).  An offscreen render-to-texture buffer is marked inverted (because
+  // _copy_texture_inverted is true on this backend), so its scene must NOT be
+  // viewport-flipped; only the final non-inverted on-screen pass is flipped.
+  bool win_inverted = (dr->get_window() != nullptr) &&
+                      dr->get_window()->get_inverted();
+  bool flip_y = !win_inverted;
+
+  if (getenv("DBG_FLIP")) {
+    GraphicsOutput *go = dr->get_window();
+    fprintf(stderr, "DBG_FLIP pdr out=%s win_inverted=%d flip_y=%d count=%d\n",
+            (go != nullptr ? go->get_name().c_str() : "(null)"),
+            (int)win_inverted, (int)flip_y, count);
+    fflush(stderr);
+  }
+
   for (int i = 0; i < count; ++i) {
     int x, y, w, h;
-    dr->get_region_pixels(i, x, y, w, h);
+    dr->get_region_pixels_i(i, x, y, w, h);
     viewports[i].x = x;
-    viewports[i].y = y;
     viewports[i].width = w;
-    viewports[i].height = h;
     viewports[i].minDepth = min_depth;
     viewports[i].maxDepth = max_depth;
+    if (flip_y) {
+      // Negative-height viewport: origin at the bottom edge (top-left space),
+      // height negative, so NDC +1 maps to the top of the region.
+      viewports[i].y = y + h;
+      viewports[i].height = -h;
+    } else {
+      viewports[i].y = y;
+      viewports[i].height = h;
+    }
 
-    // Also save this in the _viewports array for later use.
+    // Scissor is always the positive, top-left-origin framebuffer rect.
     _viewports[i].offset.x = x;
     _viewports[i].offset.y = y;
     _viewports[i].extent.width = w;
@@ -3245,10 +3364,15 @@ calc_projection_mat(const Lens *lens) {
 
   LMatrix4 result = lens->get_projection_mat(_current_stereo_channel) * rescale_mat;
 
-  if (!_scene_setup->get_inverted()) {
-    // Vulkan uses an upside down coordinate system.
-    result *= LMatrix4::scale_mat(1.0f, -1.0f, 1.0f);
-  }
+  // NB. The GL->Vulkan vertical flip (Vulkan's clip-space Y points the opposite
+  // way to OpenGL's) is NOT applied here in the projection matrix.  Instead it is
+  // done with a negative-height viewport (see prepare_display_region), which flips
+  // Y at rasterization for *every* primitive -- including fullscreen/post-process
+  // shaders that write gl_Position directly and bypass this matrix.  Keeping the
+  // projection matrix in Panda's native (GL) convention means the rest of the
+  // engine sees GL-convention clip space, exactly like the GL backend.  Only the
+  // Z-range rescale (-1..1 -> 0..1) above remains, as that is a genuine
+  // clip-volume difference, not an orientation choice.
 
   return TransformState::make_mat(result);
 }
@@ -3333,6 +3457,25 @@ begin_frame(Thread *current_thread, VkSemaphore wait_for) {
 
   int clock_frame = ClockObject::get_global_clock()->get_frame_count(current_thread);
   bool is_new_clock_frame = (clock_frame != _current_clock_frame_number);
+
+  // Normally we defer submitting an offscreen buffer's work (see end_frame),
+  // relying on the next clock frame to flush it.  But when many offscreen
+  // buffers are rendered within a single clock frame (e.g. preparing many
+  // render-to-texture targets before the first frame is rendered), that
+  // deferred work piles up in the current frame and steadily consumes command
+  // buffers that can never be reclaimed, because nothing is submitted and the
+  // timeline semaphore never advances.  Once the command-buffer pool runs dry
+  // this deadlocks in create_command_buffer().  To avoid that, force a flush
+  // and frame boundary here when the pool is running low, which is always safe
+  // since _render_cmd is null at this point.  This submits the pending work,
+  // advances the timeline, and lets get_next_frame_data() reclaim retired
+  // command buffers below.
+  if (!is_new_clock_frame &&
+      _free_command_buffers.size() < (size_t)(2 * _frame_data_capacity)) {
+    flush();
+    _frame_data = nullptr;
+  }
+
   if (is_new_clock_frame) {
     // First Vulkan frame in this clock frame.
     _current_clock_frame_number = clock_frame;
@@ -3625,12 +3768,20 @@ finish_frame(FrameData &frame_data) {
   frame_data._pending_free.clear();
 
   if (!frame_data._pending_free_descriptor_sets.empty()) {
-    VkResult err;
-    err = vkFreeDescriptorSets(_device, _descriptor_pool,
-                               frame_data._pending_free_descriptor_sets.size(),
-                               &frame_data._pending_free_descriptor_sets[0]);
-    if (err) {
-      vulkan_error(err, "Failed to free descriptor sets");
+    // Only free individual sets while there is a single pool: once the pool has
+    // grown (see allocate_descriptor_set), a set may belong to a retired pool and
+    // vkFreeDescriptorSets must be given the pool it was allocated from -- which
+    // we don't track per set.  Retired pools are kept alive and freed wholesale at
+    // teardown, so skipping the per-set free here is safe (it only forgoes early
+    // reuse in the rare grown case, e.g. after the pixel inspector ran).
+    if (_retired_descriptor_pools.empty()) {
+      VkResult err;
+      err = vkFreeDescriptorSets(_device, _descriptor_pool,
+                                 frame_data._pending_free_descriptor_sets.size(),
+                                 &frame_data._pending_free_descriptor_sets[0]);
+      if (err) {
+        vulkan_error(err, "Failed to free descriptor sets");
+      }
     }
     frame_data._pending_free_descriptor_sets.clear();
   }
@@ -3845,6 +3996,33 @@ create_command_buffer() {
   while (_free_command_buffers.empty() && finish_one_frame()) {
   }
 
+  if (_free_command_buffers.empty()) {
+    // No command buffers could be reclaimed because all outstanding frames are
+    // still pending submission (e.g. a single clock frame issues more command
+    // buffers than the pool holds -- a complex scene with many render targets
+    // and draw passes).  Grow the pool rather than reading past the end of an
+    // empty vector (which would hand back a garbage handle and crash later in
+    // vkEndCommandBuffer).
+    const uint32_t grow_count = 8 * _frame_data_capacity;
+    size_t old_size = _free_command_buffers.size();
+    _free_command_buffers.resize(old_size + grow_count);
+
+    VkCommandBufferAllocateInfo alloc_info;
+    alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.pNext = nullptr;
+    alloc_info.commandPool = _cmd_pool;
+    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandBufferCount = grow_count;
+
+    VkResult err = vkAllocateCommandBuffers(_device, &alloc_info,
+                                            &_free_command_buffers[old_size]);
+    if (err) {
+      vulkan_error(err, "Failed to allocate additional command buffers");
+      _free_command_buffers.resize(old_size);
+      return VK_NULL_HANDLE;
+    }
+  }
+
   VkCommandBuffer handle = _free_command_buffers.back();
   _free_command_buffers.pop_back();
   return handle;
@@ -3940,6 +4118,10 @@ end_command_buffer(VulkanCommandBuffer &&cmd, VkSemaphore signal_done) {
       // We don't have a preceding one, so we need to create one just to issue
       // the barriers.  This one has no seq number.
       VkCommandBuffer handle = create_command_buffer();
+
+      tmo_submit_trace("  FRESH-BARRIER-CB before CB#%u (img=%zu buf=%zu)",
+                       (unsigned)cmd._seq, _pending_image_barriers.size(),
+                       _pending_buffer_barriers.size());
 
       if (vulkandisplay_cat.is_spam()) {
         vulkandisplay_cat.spam()
@@ -4159,24 +4341,47 @@ flush() {
   }
 #endif
 
+  tmo_submit_trace("SUBMIT frame=%d clock=%d watermark=%u CB#%u-#%u count=%zu",
+                   (int)frame_data._frame_index, (int)frame_data._clock_frame_number,
+                   (unsigned)frame_data._watermark,
+                   (unsigned)_first_pending_command_buffer_seq,
+                   (unsigned)_last_pending_command_buffer_seq,
+                   _pending_submissions.size());
+
   VkResult err = vkQueueSubmit2(_queue, _pending_submissions.size(), submit_infos, VK_NULL_HANDLE);
+
+  tmo_submit_trace("DONE   frame=%d watermark=%u err=%d",
+                   (int)frame_data._frame_index, (unsigned)frame_data._watermark, (int)err);
+
+  // Whether or not the submit succeeded, these command buffers are no longer
+  // ours to record into -- ownership passes to the frame data, which reclaims
+  // them once the frame is finished (or when the GSG is reset, in the failure
+  // case below).  We must always do this and clear the pending vectors;
+  // otherwise a failed submit would leave the same buffers in
+  // _pending_command_buffers and a later flush() would call vkEndCommandBuffer()
+  // on them again -- after finish_frame() has already returned them to the free
+  // pool and they were recycled -- which is a use-after-free that crashes in the
+  // driver (observed as a NULL MVKCommandBuffer in vkEndCommandBuffer on Metal).
+  frame_data._pending_command_buffers.insert(
+    frame_data._pending_command_buffers.end(),
+    _pending_command_buffers.begin(),
+    _pending_command_buffers.end());
+  _pending_command_buffers.clear();
+  _pending_submissions.clear();
+
   if (err) {
     vulkan_error(err, "Error submitting command buffers");
     if (err == VK_ERROR_DEVICE_LOST) {
+      // The device is gone; schedule a full GSG reset, which waits for the
+      // queue to idle and tears down every frame's resources (including the
+      // command buffers we just handed to frame_data above).  Do not advance
+      // _last_submitted_watermark: this work never completed and nothing may
+      // wait on its (never-signalled) watermark.
       mark_new();
     }
     return _last_submitted_watermark;
   }
 
-  // Move these command buffers to the frame data, so we can release them when
-  // the frame is done.
-  frame_data._pending_command_buffers.insert(
-    frame_data._pending_command_buffers.end(),
-    _pending_command_buffers.begin(),
-    _pending_command_buffers.end());
-
-  _pending_command_buffers.clear();
-  _pending_submissions.clear();
   _last_submitted_watermark = frame_data._watermark;
   return frame_data._watermark;
 }
@@ -4267,7 +4472,17 @@ begin_draw_primitives(const GeomPipelineReader *geom_reader,
       break;
 
     default:
-      return false;
+      // PT_none: the Geom has no single primitive type at the Geom level (e.g. a
+      // munged geom that did not propagate its primitive type, as happens with
+      // RenderPipeline's tag-state/gbuffer geometry).  With extended dynamic
+      // state the real topology is set per-primitive in do_draw_primitive_with_
+      // topology() via vkCmdSetPrimitiveTopology, so the up-front pipeline only
+      // needs a topology *class*.  Default to the triangle class rather than
+      // refusing to draw the geom (the GL backend likewise does not reject
+      // PT_none); a wrong class would only matter for points/lines, which the
+      // per-primitive draw path will still set correctly within the same class.
+      topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+      break;
     }
 
     VkPipeline pipeline = sc->get_pipeline(this, _state_rs, data_reader->get_format(), topology, 1, _fb_config, _instanced);
@@ -4493,10 +4708,18 @@ framebuffer_copy_to_texture(Texture *tex, int view, int z,
   VulkanTextureContext *fbtc;
   if (rb._buffer_type & (RenderBuffer::T_depth | RenderBuffer::T_stencil)) {
     fbtc = _fb_depth_tc;
-    nassertr(_fb_depth_tc != nullptr, false);
   } else {
     fbtc = _fb_color_tc;
-    nassertr(_fb_color_tc != nullptr, false);
+  }
+
+  // Like framebuffer_copy_to_ram, this must be called while a framebuffer is
+  // bound (between begin_frame() and end_frame()).  Fail gracefully instead of
+  // asserting if called outside a frame.
+  if (fbtc == nullptr) {
+    vulkandisplay_cat.error()
+      << "framebuffer_copy_to_texture called with no framebuffer attachment "
+         "bound; it must be called between begin_frame() and end_frame().\n";
+    return false;
   }
 
   int xo, yo, w, h;
@@ -4621,7 +4844,17 @@ framebuffer_copy_to_ram(Texture *tex, int view, int z, const DisplayRegion *dr,
     fbtc = _fb_depth_tc;
   }
 
-  nassertr(fbtc != nullptr, false);
+  // framebuffer_copy_to_ram is contractually required to run between
+  // begin_frame() and end_frame(), so that the framebuffer attachment is bound
+  // and _fb_color_tc/_fb_depth_tc is valid.  If it is called outside a frame
+  // (e.g. a synchronous get_screenshot() before the first frame has rendered),
+  // fail gracefully rather than aborting the process with an assertion.
+  if (fbtc == nullptr) {
+    vulkandisplay_cat.error()
+      << "framebuffer_copy_to_ram called with no framebuffer attachment bound; "
+         "it must be called between begin_frame() and end_frame().\n";
+    return false;
+  }
 
   //TODO: proper format checking and size calculation.
   Texture::ComponentType type = Texture::T_unsigned_byte;
@@ -4802,6 +5035,13 @@ do_extract_buffer(VulkanBufferContext *bc, vector_uchar &data, size_t start, siz
   {
     VulkanMemoryBlock &block = (bc->_host_visible ? bc->_block : tmp_block);
     VulkanMemoryMapping mapping = block.map(bc->_host_visible ? start : 0, size);
+    // The map can fail (VK_ERROR_MEMORY_MAP_FAILED) if the underlying memory was
+    // torn down, e.g. when a readback races a swapchain/RTT resize-recreate.
+    // map() already logged the error; bail out gracefully instead of memcpy'ing
+    // from a null pointer.
+    if (!mapping) {
+      return false;
+    }
     block.invalidate();
     memcpy(&data[0], mapping, size);
   }
@@ -4895,15 +5135,29 @@ do_issue_depth_range(const DepthOffsetAttrib *target_depth_offset) {
   min_value = depth_far * min_value + depth_near * (1 - min_value);
   max_value = depth_far * max_value + depth_near * (1 - max_value);
 
+  // Negative-height viewport for the GL->Vulkan vertical flip with a top-left
+  // origin (see prepare_display_region); must match that site so depth-range
+  // respecification doesn't undo the flip or misplace multi-region viewports.
+  // Gate on the output's inverted flag (an inverted render-to-texture target is
+  // not flipped), matching prepare_display_region; see the rationale there.
+  bool win_inverted = (dr->get_window() != nullptr) &&
+                      dr->get_window()->get_inverted();
+  bool flip_y = !win_inverted;
+
   for (int i = 0; i < count; ++i) {
     int x, y, w, h;
-    dr->get_region_pixels(i, x, y, w, h);
+    dr->get_region_pixels_i(i, x, y, w, h);
     viewports[i].x = x;
-    viewports[i].y = y;
     viewports[i].width = w;
-    viewports[i].height = h;
     viewports[i].minDepth = min_value;
     viewports[i].maxDepth = max_value;
+    if (flip_y) {
+      viewports[i].y = y + h;
+      viewports[i].height = -h;
+    } else {
+      viewports[i].y = y;
+      viewports[i].height = h;
+    }
   }
 
   vkCmdSetViewport(_render_cmd, 0, count, viewports);
@@ -5172,13 +5426,35 @@ choose_fb_config(FbConfig &out, FrameBufferProperties &props,
           formats[i].rgb >= props.get_color_bits() &&
           formats[i].has_float >= props.get_float_color()) {
 
-        // This format meets the requirements.
+        // Keep the original hardcoded sRGB color attachment.  This is the
+        // behaviour under which RenderPipeline's whole deferred/composite chain
+        // renders correctly (mid-pipeline stages verified by eye).  (The "BUG 19"
+        // change to formats[i].format -- and a sRGB/float split of it -- both
+        // regressed RP across the board; see git history.)  The SGSFB float
+        // G-buffer clamp is handled separately and must NOT be re-addressed by
+        // changing this generic offscreen-color chooser.
         out._color_formats.push_back(VK_FORMAT_B8G8R8A8_SRGB);
         props.set_rgba_bits(formats[i].r, formats[i].g,
                             formats[i].b, formats[i].a);
         break;
       }
     }
+  }
+
+  // Add a color attachment for each requested auxiliary bitplane (used for
+  // multiple-render-target rendering, e.g. a deferred renderer's G-buffer).
+  // These follow the main color attachment in _color_formats, in the same order
+  // the RTP_aux_* planes are created in create_framebuffer().  Without these the
+  // pipeline only has one color attachment and the shader's location>=1 outputs
+  // are silently dropped (the aux targets stay black).
+  for (int i = 0; i < props.get_aux_rgba(); ++i) {
+    out._color_formats.push_back(VK_FORMAT_R8G8B8A8_UNORM);
+  }
+  for (int i = 0; i < props.get_aux_hrgba(); ++i) {
+    out._color_formats.push_back(VK_FORMAT_R16G16B16A16_SFLOAT);
+  }
+  for (int i = 0; i < props.get_aux_float(); ++i) {
+    out._color_formats.push_back(VK_FORMAT_R32G32B32A32_SFLOAT);
   }
 
   // Choose a suitable depth/stencil format that satisfies the requirements.
@@ -5455,8 +5731,26 @@ make_pipeline(VulkanShaderContext *sc,
 
     attrib_desc[i].location = input._location;
 
+    // Resolve the column this input reads from.  For a p3d_MultiTexCoord<n>
+    // input, the shader binds it to the base texcoord InternalName ("texcoord")
+    // with the set index in _append_uv.  Many loaders (e.g. panda3d-gltf) name
+    // the per-set UV column "texcoord.<n>" rather than the bare "texcoord", so
+    // if the bare name isn't present, fall back to "texcoord.<n>".  This mirrors
+    // the GL backend, which remaps via the TextureStage's get_texcoord_name();
+    // here we resolve it from the set index directly so it stays consistent with
+    // the cached pipeline (which is not keyed on the texture state).
+    CPT(InternalName) lookup_name = input._name;
+    if (input._append_uv >= 0 && input._name == InternalName::get_texcoord() &&
+        !key._format->has_column(input._name)) {
+      CPT(InternalName) set_name =
+        InternalName::get_texcoord_name(format_string(input._append_uv));
+      if (key._format->has_column(set_name)) {
+        lookup_name = std::move(set_name);
+      }
+    }
+
     if ((key.get_color_type() != ColorAttrib::T_vertex && input._name == InternalName::get_color()) ||
-        !key._format->get_array_info(input._name, array_index, column)) {
+        !key._format->get_array_info(lookup_name, array_index, column)) {
       // The shader references a non-existent vertex column.  To make this a
       // well-defined operation (as in OpenGL), we bind a "null" vertex buffer
       // containing a fixed value with a stride of 0.
@@ -5551,6 +5845,45 @@ make_pipeline(VulkanShaderContext *sc,
       attrib_desc[i].format = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
       break;
     }
+
+    // If the shader declares this input as floating-point but the column is a
+    // non-normalized integer type, we picked an integer (*_UINT / *_SINT)
+    // format above.  Vulkan/MoltenVK strictly requires the host format's base
+    // type to match the shader input's base type, so binding an integer format
+    // to a float input fails pipeline creation ("Vertex attribute type mismatch
+    // between host and shader").  The OpenGL backend instead converts the
+    // integer to float (glVertexAttribPointer on a float attrib), so to match
+    // that behaviour we remap the integer format to its *_USCALED / *_SSCALED
+    // counterpart, which reads the integer and converts it to float as-is.
+    // This is what makes e.g. a uint16 hardware-skinning transform_index column
+    // bind to simplepbr's `attribute vec4 transform_index;` input.
+    if (input._scalar_type == ShaderType::ST_float ||
+        input._scalar_type == ShaderType::ST_unknown) {
+      switch (attrib_desc[i].format) {
+      // 8-bit
+      case VK_FORMAT_R8_UINT:             attrib_desc[i].format = VK_FORMAT_R8_USCALED; break;
+      case VK_FORMAT_R8G8_UINT:           attrib_desc[i].format = VK_FORMAT_R8G8_USCALED; break;
+      case VK_FORMAT_R8G8B8_UINT:         attrib_desc[i].format = VK_FORMAT_R8G8B8_USCALED; break;
+      case VK_FORMAT_R8G8B8A8_UINT:       attrib_desc[i].format = VK_FORMAT_R8G8B8A8_USCALED; break;
+      case VK_FORMAT_R8_SINT:             attrib_desc[i].format = VK_FORMAT_R8_SSCALED; break;
+      case VK_FORMAT_R8G8_SINT:           attrib_desc[i].format = VK_FORMAT_R8G8_SSCALED; break;
+      case VK_FORMAT_R8G8B8_SINT:         attrib_desc[i].format = VK_FORMAT_R8G8B8_SSCALED; break;
+      case VK_FORMAT_R8G8B8A8_SINT:       attrib_desc[i].format = VK_FORMAT_R8G8B8A8_SSCALED; break;
+      // 16-bit
+      case VK_FORMAT_R16_UINT:            attrib_desc[i].format = VK_FORMAT_R16_USCALED; break;
+      case VK_FORMAT_R16G16_UINT:         attrib_desc[i].format = VK_FORMAT_R16G16_USCALED; break;
+      case VK_FORMAT_R16G16B16_UINT:      attrib_desc[i].format = VK_FORMAT_R16G16B16_USCALED; break;
+      case VK_FORMAT_R16G16B16A16_UINT:   attrib_desc[i].format = VK_FORMAT_R16G16B16A16_USCALED; break;
+      case VK_FORMAT_R16_SINT:            attrib_desc[i].format = VK_FORMAT_R16_SSCALED; break;
+      case VK_FORMAT_R16G16_SINT:         attrib_desc[i].format = VK_FORMAT_R16G16_SSCALED; break;
+      case VK_FORMAT_R16G16B16_SINT:      attrib_desc[i].format = VK_FORMAT_R16G16B16_SSCALED; break;
+      case VK_FORMAT_R16G16B16A16_SINT:   attrib_desc[i].format = VK_FORMAT_R16G16B16A16_SSCALED; break;
+      // 32-bit integers have no *_SCALED form; the shader generator does not use
+      // 32-bit integer columns for float inputs, so leave those as-is.
+      default:
+        break;
+      }
+    }
     ++i;
   }
 
@@ -5633,7 +5966,14 @@ make_pipeline(VulkanShaderContext *sc,
   }
 
   raster_info.cullMode = (VkCullModeFlagBits)key.get_cull_face_mode();
-  raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE; // Flipped
+  // The GL->Vulkan vertical flip is done with a negative-height viewport (see
+  // prepare_display_region).  Like the old projection-matrix flip it replaced,
+  // the viewport flip reverses apparent winding at rasterization, so this
+  // front-face compensation is still required (verified empirically: with a
+  // negative-height viewport and VK_FRONT_FACE_CLOCKWISE, both normal
+  // back-face-culled geometry and projection-matrix-bypassing fullscreen passes
+  // render correctly).
+  raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
   if (key._depth_bias_attrib != nullptr) {
     raster_info.depthBiasEnable = VK_TRUE;
@@ -5678,7 +6018,21 @@ make_pipeline(VulkanShaderContext *sc,
   ds_info.minDepthBounds = 0;
   ds_info.maxDepthBounds = 0;
 
-  VkPipelineColorBlendAttachmentState att_state[1];
+  // One blend-attachment state is computed below; it is then replicated to every
+  // color attachment in the framebuffer (e.g. a deferred G-buffer renders to a
+  // color attachment plus several "aux" attachments).  The pipeline's
+  // colorBlendState attachmentCount MUST match the render pass's color
+  // attachment count, otherwise the attachments without a blend state are not
+  // written at all (they stay at their clear value -- which shows up as the aux
+  // G-buffer targets being all black).
+  // The pipeline's colorBlendState attachmentCount must equal the render pass's
+  // color attachment count -- which is 0 for a depth-only pass (e.g. a shadow
+  // map), 1 for a normal render, or N for an MRT/G-buffer render.  We always
+  // compute one blend-attachment state below (so allocate at least one slot),
+  // but only expose num_color_attachments of them to the pipeline.
+  size_t num_color_attachments = fb_config._color_formats.size();
+  VkPipelineColorBlendAttachmentState *att_state = (VkPipelineColorBlendAttachmentState *)
+    alloca(sizeof(VkPipelineColorBlendAttachmentState) * std::max((size_t)1, num_color_attachments));
   if (key._color_blend_attrib != nullptr) {
     const ColorBlendAttrib *color_blend = key._color_blend_attrib;
     nassertr(color_blend->get_mode() != ColorBlendAttrib::M_none, VK_NULL_HANDLE);
@@ -5748,6 +6102,13 @@ make_pipeline(VulkanShaderContext *sc,
   }
   att_state[0].colorWriteMask = key.get_color_write_channels();
 
+  // Replicate the computed blend state to every additional color attachment, so
+  // that all of the framebuffer's color targets (e.g. the G-buffer's aux
+  // attachments) are written, not just attachment 0.
+  for (size_t ai = 1; ai < num_color_attachments; ++ai) {
+    att_state[ai] = att_state[0];
+  }
+
   VkPipelineColorBlendStateCreateInfo blend_info;
   blend_info.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   blend_info.pNext = nullptr;
@@ -5761,7 +6122,7 @@ make_pipeline(VulkanShaderContext *sc,
     blend_info.logicOp = VK_LOGIC_OP_COPY;
   }
 
-  blend_info.attachmentCount = 1;
+  blend_info.attachmentCount = (uint32_t)num_color_attachments;
   blend_info.pAttachments = att_state;
 
   LColor constant_color = LColor::zero();
@@ -5887,6 +6248,79 @@ make_compute_pipeline(VulkanShaderContext *sc) {
 }
 
 /**
+ * Creates a new descriptor pool sized for the backend's needs.  Returns
+ * VK_NULL_HANDLE on failure.  Used both for the initial pool and to grow the
+ * pool when it runs out (see allocate_descriptor_set).
+ */
+VkDescriptorPool VulkanGraphicsStateGuardian::
+make_descriptor_pool() const {
+  static const VkDescriptorPoolSize pool_sizes[] = {
+    {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096},
+    {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 512},
+    {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 256},
+    {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 256},
+    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 256},
+    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 256},
+    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 128},
+  };
+
+  VkDescriptorPoolCreateInfo pool_info;
+  pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  pool_info.pNext = nullptr;
+  pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  pool_info.maxSets = 1024;
+  pool_info.poolSizeCount = sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize);
+  pool_info.pPoolSizes = pool_sizes;
+
+  VkDescriptorPool pool = VK_NULL_HANDLE;
+  VkResult err = vkCreateDescriptorPool(_device, &pool_info, nullptr, &pool);
+  if (err) {
+    vulkan_error(err, "Failed to create descriptor pool");
+    return VK_NULL_HANDLE;
+  }
+  return pool;
+}
+
+/**
+ * Allocates a single descriptor set with the given layout from the descriptor
+ * pool.  If the current pool is exhausted (VK_ERROR_OUT_OF_POOL_MEMORY or
+ * VK_ERROR_FRAGMENTED_POOL), retires it and allocates a fresh pool, then
+ * retries -- so the backend grows its descriptor capacity on demand instead of
+ * failing (and crashing) when a state-heavy frame, e.g. RenderPipeline's pixel
+ * inspector / pipe viewer, needs more than the initial 1024 sets.  Returns true
+ * on success.
+ */
+bool VulkanGraphicsStateGuardian::
+allocate_descriptor_set(VkDescriptorSetLayout layout, VkDescriptorSet &out) {
+  VkDescriptorSetAllocateInfo alloc_info;
+  alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  alloc_info.pNext = nullptr;
+  alloc_info.descriptorPool = _descriptor_pool;
+  alloc_info.descriptorSetCount = 1;
+  alloc_info.pSetLayouts = &layout;
+
+  VkResult err = vkAllocateDescriptorSets(_device, &alloc_info, &out);
+  if (err == VK_ERROR_OUT_OF_POOL_MEMORY || err == VK_ERROR_FRAGMENTED_POOL) {
+    // The current pool is full.  Keep it around (its sets are still in use) and
+    // allocate from a fresh one.
+    VkDescriptorPool new_pool = make_descriptor_pool();
+    if (new_pool == VK_NULL_HANDLE) {
+      return false;
+    }
+    _retired_descriptor_pools.push_back(_descriptor_pool);
+    _descriptor_pool = new_pool;
+    alloc_info.descriptorPool = _descriptor_pool;
+    err = vkAllocateDescriptorSets(_device, &alloc_info, &out);
+  }
+  if (err) {
+    vulkan_error(err, "Failed to allocate descriptor set");
+    out = VK_NULL_HANDLE;
+    return false;
+  }
+  return true;
+}
+
+/**
  * Returns a VkDescriptorSet for the resources of the given render state.
  * Returns true if this was the first use of this set in this frame, false
  * otherwise.  If force_update is true, will always make sure to return a
@@ -5931,15 +6365,7 @@ get_attrib_descriptor_set(VkDescriptorSet &out,
 
   VulkanShaderContext::DescriptorSet set;
 
-  VkDescriptorSetAllocateInfo alloc_info;
-  alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  alloc_info.pNext = nullptr;
-  alloc_info.descriptorPool = _descriptor_pool;
-  alloc_info.descriptorSetCount = 1;
-  alloc_info.pSetLayouts = &layout;
-  VkResult err = vkAllocateDescriptorSets(_device, &alloc_info, &set._handle);
-  if (err) {
-    vulkan_error(err, "Failed to allocate descriptor set for attribute");
+  if (!allocate_descriptor_set(layout, set._handle)) {
     return false;
   }
 
@@ -6660,7 +7086,15 @@ get_image_format(const Texture *texture) const {
   case Texture::F_rgb16:
     return (VkFormat)(VK_FORMAT_R16G16B16_UNORM + is_signed);
   case Texture::F_srgb:
-    return VK_FORMAT_B8G8R8A8_SRGB;
+    // Three-component sRGB.  Return the matching three-byte format so that the
+    // staging buffer is sized for the (three-component) RAM image; create_texture
+    // then converts this to the four-byte R8G8B8A8_SRGB and sets pack_bgr8, since
+    // most drivers (incl. Metal/MoltenVK) don't support three-byte image formats.
+    // Returning the four-byte format here directly would leave the staging buffer
+    // sized for three bytes/texel while the image expects four, so the
+    // vkCmdCopyBufferToImage would read past the end of the staging buffer (a GPU
+    // page fault on devices without robustBufferAccess2).
+    return VK_FORMAT_B8G8R8_SRGB;
   case Texture::F_srgb_alpha:
     return VK_FORMAT_B8G8R8A8_SRGB;
   case Texture::F_sluminance:

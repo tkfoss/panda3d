@@ -117,6 +117,15 @@ begin_frame(FrameMode mode, Thread *current_thread) {
     // Before destroying the old, make sure the queue is no longer rendering
     // anything to it.
     vkQueueWaitIdle(vkgsg->_queue);
+    // The previous end_flip() created _image_available and used it to acquire an
+    // image from the swapchain we are about to destroy.  create_swapchain() will
+    // overwrite _image_available with a fresh semaphore, so destroy the old one
+    // here or it leaks (one semaphore per resize), and its pending acquire is
+    // orphaned along with the old swapchain anyway.
+    if (_image_available != VK_NULL_HANDLE) {
+      vkDestroySemaphore(vkgsg->_device, _image_available, nullptr);
+      _image_available = VK_NULL_HANDLE;
+    }
     destroy_swapchain();
     if (!create_swapchain()) {
       return false;

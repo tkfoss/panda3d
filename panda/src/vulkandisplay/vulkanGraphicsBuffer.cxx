@@ -67,6 +67,11 @@ clear(Thread *current_thread) {
  * return true if the frame should be rendered, or false if it should be
  * skipped.
  */
+// Defined (non-static) in vulkanGraphicsStateGuardian.cxx, later in this
+// composite translation unit.  Logs which named output is rendering so the
+// faulting submit in TMO_SUBMIT_TRACE can be mapped to a buffer.
+void tmo_submit_trace(const char *fmt, ...);
+
 bool VulkanGraphicsBuffer::
 begin_frame(FrameMode mode, Thread *current_thread) {
   begin_frame_spam(mode);
@@ -77,6 +82,10 @@ begin_frame(FrameMode mode, Thread *current_thread) {
   if (mode != FM_render) {
     return true;
   }
+
+  tmo_submit_trace("  BEGIN-BUFFER name=%s size=%dx%d flags=0x%x",
+                   get_name().c_str(), _size[0], _size[1],
+                   (unsigned)_creation_flags);
 
   VulkanGraphicsStateGuardian *vkgsg;
   DCAST_INTO_R(vkgsg, _gsg, false);
@@ -126,8 +135,10 @@ begin_frame(FrameMode mode, Thread *current_thread) {
     clear_cube_map_selection();
   }*/
 
-  // Now that we have a command buffer, start our render pass.
-  return _framebuffer.begin_rendering(vkgsg, this);
+  // Now that we have a command buffer, start our render pass.  A cumulative
+  // buffer preserves its textures' previous contents when clears are inactive.
+  bool cumulative = (_creation_flags & GraphicsPipe::BF_rtt_cumulative) != 0;
+  return _framebuffer.begin_rendering(vkgsg, this, false, cumulative);
 }
 
 /**
@@ -267,6 +278,39 @@ create_framebuffer(CDReader &cdata) {
       return false;
     }
   }
+
+  // Create a color attachment for each auxiliary bitplane (MRT / G-buffer
+  // targets).  These map to _color_formats[1..] in the same order that
+  // choose_fb_config() appended them: aux_rgba, then aux_hrgba, then aux_float.
+  // Each may have a bound render-texture in cdata->_textures keyed by its plane.
+  {
+    size_t color_index = 1;
+    auto add_aux_planes = [&](RenderTexturePlane first_plane, int count) -> bool {
+      for (int i = 0; i < count; ++i) {
+        if (color_index >= _framebuffer._config._color_formats.size()) {
+          return true;
+        }
+        RenderTexturePlane plane = (RenderTexturePlane)((int)first_plane + i);
+        Texture *aux_texture = nullptr;
+        for (const RenderTexture &rt : cdata->_textures) {
+          if ((rt._rtm_mode == RTM_bind_or_copy || rt._rtm_mode == RTM_bind_layered) &&
+              rt._plane == plane) {
+            aux_texture = rt._texture;
+            break;
+          }
+        }
+        if (!create_attachment(plane, _framebuffer._config._color_formats[color_index], aux_texture)) {
+          return false;
+        }
+        ++color_index;
+      }
+      return true;
+    };
+    if (!add_aux_planes(RTP_aux_rgba_0, _fb_properties.get_aux_rgba())) return false;
+    if (!add_aux_planes(RTP_aux_hrgba_0, _fb_properties.get_aux_hrgba())) return false;
+    if (!add_aux_planes(RTP_aux_float_0, _fb_properties.get_aux_float())) return false;
+  }
+
   if (_framebuffer._config._depth_format != VK_FORMAT_UNDEFINED) {
     if (!create_attachment(_depth_stencil_plane, _framebuffer._config._depth_format, depth_texture)) {
       return false;
@@ -331,6 +375,18 @@ create_attachment(RenderTexturePlane plane, VkFormat format, Texture *texture) {
     texture->set_format(tex_format);
     texture->set_component_type(tex_component_type);
     texture->set_render_to_texture(true);
+
+    // Make the bound texture match this framebuffer's current size BEFORE the
+    // needs_recreation() check.  On a resize the framebuffer's _size changes but
+    // the RenderTarget only calls GraphicsBuffer::set_size() (not the texture's
+    // size), so needs_recreation() (which compares tex x/y to tc->_extent) would
+    // see the OLD size, skip release()+create_texture(), and leave tc->_extent +
+    // the cached image view addressing the PREVIOUS image -> the new VkImage and
+    // the sampled view mismatch -> garbage (the RP "red/black until you resize"
+    // bug; a 2nd resize finally lands a matching view).  Forcing the size here
+    // makes a size change always trigger a full image+view rebuild.
+    texture->set_x_size(extent.width);
+    texture->set_y_size(extent.height);
 
     DCAST_INTO_R(tc, texture->prepare_now(vkgsg->get_prepared_objects(), vkgsg), false);
 

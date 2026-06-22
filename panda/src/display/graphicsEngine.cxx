@@ -2430,6 +2430,21 @@ auto_adjust_capabilities(GraphicsStateGuardian *gsg) {
     }
   }
 
+  // Even without the opt-in textures_auto_power_2 flag, honor a GSG that
+  // supports non-power-of-two textures (every modern desktop GL/Vulkan/Metal
+  // device does) by not forcing power-of-two scaling -- UNLESS the user
+  // explicitly set textures-power-2 in a config file (respect that choice).
+  // Without this, render-to-texture targets (e.g. FilterManager / CommonFilters
+  // buffers, which are sized to the window) get padded up to the next power of
+  // two; consumers that sample them with full [0,1] UVs then show the scene in
+  // only a sub-rectangle.  This elevation is safe under the same "only elevate
+  // on a capable gsg" rule as the branch above, and stays conservative: it is
+  // skipped if textures-power-2 was set explicitly.
+  if (!textures_auto_power_2 && !Texture::has_textures_power_2() &&
+      !textures_power_2.has_value() && gsg->get_supports_tex_non_pow2()) {
+    Texture::set_textures_power_2(ATS_none);
+  }
+
   if ((Texture::get_textures_power_2() == ATS_none) &&
       (!gsg->get_supports_tex_non_pow2())) {
 

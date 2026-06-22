@@ -121,9 +121,11 @@ public:
       PS_depth_write_shift = 13,
       PS_depth_write_mask = 1 << PS_depth_write_shift,
 
-      // 4 bits
+      // 4 bits (CullFaceAttrib::Mode is 0..2; a 1-bit mask made value 2 =
+      // M_cull_counter_clockwise read back as 0 = M_cull_none, silently
+      // disabling culling on inverted-RTT geometry and colliding pipeline keys)
       PS_cull_face_mode_shift = 14,
-      PS_cull_face_mode_mask = 1 << PS_cull_face_mode_shift,
+      PS_cull_face_mode_mask = 3 << PS_cull_face_mode_shift,
 
       // 5 bits
       PS_logic_op_shift = 18,
@@ -216,6 +218,16 @@ private:
     int _location;
     bool _only_anim = false;
     VkFormat _null_format;
+    // The scalar type the shader declares this input as (ST_float, ST_int, ...).
+    // Used to pick a host vertex format whose base type matches the shader, so
+    // that e.g. an integer vertex column feeding a float shader input is read as
+    // a *SCALED format (int->float) rather than an integer format MoltenVK rejects.
+    ShaderType::ScalarType _scalar_type = ShaderType::ST_float;
+    // For p3d_MultiTexCoord<n> inputs, the texture-coordinate set index <n>
+    // (-1 otherwise).  Used to resolve the input's "texcoord" base name to the
+    // actual vertex column name of the corresponding TextureStage (e.g.
+    // "texcoord.0"), matching the GL backend; see make_pipeline.
+    int _append_uv = -1;
   };
   pvector<VertexInput> _vertex_inputs;
 

@@ -15,6 +15,10 @@
 #include "vulkanTextureContext.h"
 #include "shaderBuffer.h"
 
+// Defined (non-static) later in this composite TU, in
+// vulkanGraphicsStateGuardian.cxx.  fsync's each line to TMO_SUBMIT_TRACE.
+void tmo_submit_trace(const char *fmt, ...);
+
 /**
  * Marks the given resource as being used by this command buffer, ensuring that
  * the appropriate pipeline barrier is added to the command buffer.
@@ -47,6 +51,20 @@ add_barrier(VulkanTextureContext *tc, VkImageLayout layout,
   VkAccessFlags2 src_access_mask = tc->_write_access_mask;
 
   bool is_write = (tc->_layout != layout || write_mask != 0);
+
+  {
+    Texture *dbgtex = tc->get_texture();
+    tmo_submit_trace("    BARRIER tex=%s CB#%u oldLayout=%d newLayout=%d "
+                     "wr_seq=%u rd_seq=%u wr_stage=0x%llx rd_stage=0x%llx "
+                     "is_write=%d",
+                     dbgtex ? dbgtex->get_name().c_str() : "(null)",
+                     (unsigned)_seq, (int)tc->_layout, (int)layout,
+                     (unsigned)tc->_write_seq, (unsigned)tc->_read_seq,
+                     (unsigned long long)tc->_write_stage_mask,
+                     (unsigned long long)tc->_read_stage_mask,
+                     (int)is_write);
+  }
+
   if (is_write) {
     // Before a layout transition or a write, all stages that previously read
     // this resource must have finished executing.
@@ -59,6 +77,7 @@ add_barrier(VulkanTextureContext *tc, VkImageLayout layout,
   }
   else if (src_stage_mask == 0) {
     // No write has been done, nothing to do here, except mark the read.
+    tmo_submit_trace("    BARRIER -> SKIP (no write, src_stage=0)");
     tc->mark_read(_seq);
     tc->_read_stage_mask |= dst_stage_mask;
     return;

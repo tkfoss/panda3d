@@ -50,6 +50,13 @@ public:
 
   uint32_t _alpha_ref_var_id = 0;
   uint32_t _compare_op_offset = 0;
+  // True once a comparison op has actually been injected, so that postprocess()
+  // only translates the (function-relative) offset to a module offset when there
+  // is one.  Without this, a shader where no alpha test was injected (offset
+  // stays 0) would have the buffer sizes added in postprocess, turning the
+  // "not injected" sentinel 0 into a bogus non-zero offset that points into the
+  // middle of the module (e.g. at an OpFunction).
+  bool _compare_op_injected = false;
 
 private:
   uint32_t _var_id = 0;

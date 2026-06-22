@@ -21,8 +21,19 @@ bool SpirVInjectAlphaTestPass::
 transform_entry_point(spv::ExecutionModel model, uint32_t id, const char *name, pvector<uint32_t> &vars) {
   if (model == spv::ExecutionModelFragment) {
     for (uint32_t var_id : vars) {
-      if (_db.get_definition(var_id)._location == 0) {
-        _entry_points[id] = var_id;
+      const Definition &def = _db.get_definition(var_id);
+      if (def._location == 0) {
+        // The alpha test reads the alpha component (.a) of this output, so it
+        // is only valid if the location-0 output is a vector with at least 4
+        // components (a colour).  Shaders may instead place a struct or a
+        // narrower type at location 0 (e.g. a packed G-buffer output), in
+        // which case op_access_chain(var, {3}) would index out of bounds.
+        // Only register such an output when it is a vec4-or-wider colour.
+        const ShaderType::Vector *vec =
+          (def._type != nullptr) ? def._type->as_vector() : nullptr;
+        if (vec != nullptr && vec->get_num_components() >= 4) {
+          _entry_points[id] = var_id;
+        }
         break;
       }
     }
@@ -112,6 +123,7 @@ transform_function_op(Instruction op) {
     uint32_t ref = _spec_constant ? _alpha_ref_var_id : op_load(_alpha_ref_var_id);
 
     _compare_op_offset = _new_functions.size();
+    _compare_op_injected = true;
     uint32_t cond = op_compare(opcode, alpha, ref);
 
     uint32_t branch = branch_if(cond);
@@ -138,5 +150,11 @@ end_function(uint32_t function_id) {
  */
 void SpirVInjectAlphaTestPass::
 postprocess() {
+  if (!_compare_op_injected) {
+    // No alpha test was injected into this shader (e.g. it has no entry point
+    // writing a color output to test).  Leave _compare_op_offset at its 0
+    // sentinel so callers know there is nothing to patch.
+    return;
+  }
   _compare_op_offset += _new_preamble.size() + _new_annotations.size() + _new_definitions.size();
 }

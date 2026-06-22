@@ -52,7 +52,7 @@ VulkanShaderContext(Shader *shader) :
     // Figure out which format we should use for the binding when nothing is
     // present - just needs to match scalar type
     VkFormat null_format = VK_FORMAT_R32_SFLOAT;
-    ShaderType::ScalarType scalar_type;
+    ShaderType::ScalarType scalar_type = ShaderType::ST_float;
     uint32_t dim[3];
     if (bind._id._type->as_scalar_type(scalar_type, dim[0], dim[1], dim[2])) {
       switch (scalar_type) {
@@ -75,7 +75,7 @@ VulkanShaderContext(Shader *shader) :
         break;
       }
     }
-    _vertex_inputs.push_back({bind._name, bind._id._location, false, null_format});
+    _vertex_inputs.push_back({bind._name, bind._id._location, false, null_format, scalar_type, bind._append_uv});
 
     int num_locations = bind._id._type->get_num_interface_locations();
     next_unused_location =
@@ -112,11 +112,11 @@ VulkanShaderContext(Shader *shader) :
     if (_anim_attrib_locations != 0u) {
       if (_transform_index_location < 0) {
         _transform_index_location = next_unused_location++;
-        _vertex_inputs.push_back({InternalName::get_transform_index(), _transform_index_location, true, VK_FORMAT_R32_UINT});
+        _vertex_inputs.push_back({InternalName::get_transform_index(), _transform_index_location, true, VK_FORMAT_R32_UINT, ShaderType::ST_uint});
       }
       if (_transform_weight_location < 0) {
         _transform_weight_location = next_unused_location++;
-        _vertex_inputs.push_back({InternalName::get_transform_weight(), _transform_weight_location, true, VK_FORMAT_R32G32B32A32_SFLOAT});
+        _vertex_inputs.push_back({InternalName::get_transform_weight(), _transform_weight_location, true, VK_FORMAT_R32G32B32A32_SFLOAT, ShaderType::ST_float});
       }
     }
   }
@@ -869,9 +869,18 @@ fetch_descriptor(VulkanGraphicsStateGuardian *gsg, const Descriptor &desc,
       int view = gsg->get_current_tex_view_offset();
       PT(Texture) texture = desc._binding->fetch_texture(state, id, sampler, view);
 
+      // DBG_FORCE_GENERAL: probe -- sample in GENERAL layout instead of
+      // SHADER_READ_ONLY_OPTIMAL. Tests the theory that the bloom corruption is
+      // a same-image-two-layouts conflict (the bloom image is bound in one draw
+      // as both a storage image (GENERAL) and a sampler (READ_ONLY_OPTIMAL)).
+      VkImageLayout sample_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      if (getenv("DBG_FORCE_GENERAL")) {
+        sample_layout = VK_IMAGE_LAYOUT_GENERAL;
+      }
+
       VulkanTextureContext *tc;
       tc = gsg->use_texture(texture,
-                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                            sample_layout,
                             desc._pipeline_stage_mask,
                             VK_ACCESS_2_SHADER_READ_BIT);
 
@@ -881,7 +890,7 @@ fetch_descriptor(VulkanGraphicsStateGuardian *gsg, const Descriptor &desc,
       VkDescriptorImageInfo &image_info = *image_infos++;
       image_info.sampler = sc->_sampler;
       image_info.imageView = tc ? tc->get_image_view(view) : VK_NULL_HANDLE;
-      image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      image_info.imageLayout = sample_layout;
     }
     break;
 
@@ -938,7 +947,19 @@ fetch_descriptor(VulkanGraphicsStateGuardian *gsg, const Descriptor &desc,
       } else {
         VkDescriptorImageInfo &image_info = *image_infos++;
         image_info.sampler = VK_NULL_HANDLE;
-        image_info.imageView = tc ? tc->get_image_view(view) : VK_NULL_HANDLE;
+        // fetch_texture_image returns the bind mip level in n and the array
+        // layer / z-slice in z (the mip/z args of set_shader_input).  When a
+        // specific level or layer is requested, bind a view of just that
+        // subresource so imageStore writes land there -- not on mip 0 of the
+        // whole image (which is what get_image_view returns).  This makes RP's
+        // bloom mip pyramid and prefiltered IBL cubemap work.  z == -1 / n == 0
+        // with a single-mip image is the common case and yields the full view.
+        if (tc != nullptr && (n > 0 || z >= 0)) {
+          image_info.imageView =
+            tc->get_storage_image_view(gsg->_device, view, n, z);
+        } else {
+          image_info.imageView = tc ? tc->get_image_view(view) : VK_NULL_HANDLE;
+        }
         image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
       }
     }

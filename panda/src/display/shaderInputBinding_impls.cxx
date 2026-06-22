@@ -552,7 +552,12 @@ make_transform_table(const ShaderType *type, bool transpose) {
     return ShaderInputBinding::make_data(Shader::D_vertex_data,
                                          [=](const State &state, void *into, bool packed) {
 
-      const TransformTable *table = state.gsg->get_data_reader()->get_transform_table();
+      // The data reader is null when this binding is fetched outside of an
+      // active geometry draw (e.g. the Vulkan backend fetches the "other state"
+      // UBO in set_state_and_transform, before begin_draw_primitives sets the
+      // reader).  Treat it as having no transform table -> identity matrices.
+      const GeomVertexDataPipelineReader *reader = state.gsg->get_data_reader();
+      const TransformTable *table = (reader != nullptr) ? reader->get_transform_table() : nullptr;
       LMatrix4f *matrices = (LMatrix4f *)into;
       size_t i = 0;
       if (table != nullptr) {
@@ -579,7 +584,9 @@ make_transform_table(const ShaderType *type, bool transpose) {
     return ShaderInputBinding::make_data(Shader::D_vertex_data,
                                          [=](const State &state, void *into, bool packed) {
 
-      const TransformTable *table = state.gsg->get_data_reader()->get_transform_table();
+      // See note above: the data reader may be null when fetched outside a draw.
+      const GeomVertexDataPipelineReader *reader = state.gsg->get_data_reader();
+      const TransformTable *table = (reader != nullptr) ? reader->get_transform_table() : nullptr;
       LVecBase4f *vectors = (LVecBase4f *)into;
       size_t i = 0;
       if (table != nullptr) {
@@ -623,7 +630,10 @@ make_slider_table(const ShaderType *type) {
   return ShaderInputBinding::make_data(Shader::D_vertex_data,
                                        [=](const State &state, void *into, bool packed) {
 
-    const SliderTable *table = state.gsg->get_data_reader()->get_slider_table();
+    // See make_transform_table: the data reader may be null when fetched
+    // outside of an active geometry draw.  Treat as no slider table (zeros).
+    const GeomVertexDataPipelineReader *reader = state.gsg->get_data_reader();
+    const SliderTable *table = (reader != nullptr) ? reader->get_slider_table() : nullptr;
     float *sliders = (float *)into;
     memset(sliders, 0, num_elements * sizeof(float));
     if (table != nullptr) {

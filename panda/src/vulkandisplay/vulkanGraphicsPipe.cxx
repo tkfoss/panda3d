@@ -1078,10 +1078,12 @@ make_output(std::string_view name,
 
   if (retry == 1) {
     if ((flags & BF_require_parasite) != 0 ||
-        (flags & BF_require_window) != 0 ||
-        (flags & BF_rtt_cumulative) != 0) {
+        (flags & BF_require_window) != 0) {
       return nullptr;
     }
+    // Note: BF_rtt_cumulative is honored by VulkanGraphicsBuffer (its render
+    // pass uses LOAD_OP_LOAD when the region's clears are inactive, preserving
+    // the texture's previous contents), so it does not disqualify the buffer.
     return new VulkanGraphicsBuffer(engine, this, std::string(name), fb_prop, win_prop,
                                     flags, gsg, host);
   }
