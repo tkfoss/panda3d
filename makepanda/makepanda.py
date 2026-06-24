@@ -922,8 +922,12 @@ if (COMPILER=="GCC"):
         if "VULKAN" in SDK:
             IncDirectory("VULKAN", os.path.join(SDK["VULKAN"], "include"))
             if GetTarget() == "darwin":
-                # This gets copied to built/lib, below
-                LibName("VULKAN", "-lMoltenVK")
+                # Link the Vulkan LOADER (libvulkan), not MoltenVK directly, so that
+                # instance layers (VK_LAYER_KHRONOS_validation) can attach -- layers
+                # are a loader feature and cannot insert into the call chain when the
+                # ICD (MoltenVK) is linked directly.  MoltenVK is discovered at runtime
+                # as the ICD via VK_ICD_FILENAMES.  The loader dylib is bundled below.
+                LibName("VULKAN", "-lvulkan")
             else:
                 LibName("VULKAN", os.path.join(SDK["VULKAN"], "lib", "libvulkan.so"))
         else:
@@ -3269,13 +3273,26 @@ if GetTarget() == 'windows' and "VISUALSTUDIO" in SDK:
     if os.path.isfile(os.path.join(dir, "vcruntime" + vcver + ".dll")):
         CopyFile(GetOutputDir() + "/bin/", os.path.join(dir, "vcruntime" + vcver + ".dll"))
 
-# Copy over the MoltenVK library.
+# Copy over the MoltenVK library (the ICD; discovered at runtime via VK_ICD_FILENAMES).
 if GetTarget() == 'darwin' and not PkgSkip("VULKAN") and "VULKAN" in SDK:
     dylib = os.path.join(SDK["VULKAN"], "lib", "libMoltenVK.dylib")
     target = os.path.join(GetOutputDir(), "lib", "libMoltenVK.dylib")
     if NeedsBuild([target], [dylib]):
         CopyFile(target, dylib)
         oscmd('install_name_tool -id @loader_path/../lib/libMoltenVK.dylib ' + target)
+        oscmd('codesign -f -s - ' + target)
+        JustBuilt([target], [dylib])
+
+# Copy over the Vulkan loader (libvulkan), which the backend now links against so
+# that validation layers can attach.  Bundle it as the UNVERSIONED libvulkan.dylib so
+# the linker's -lvulkan (which searches -Lbuilt/lib) resolves it, and give it a
+# @loader_path-relative install name so libp3vulkandisplay resolves it at runtime.
+if GetTarget() == 'darwin' and not PkgSkip("VULKAN") and "VULKAN" in SDK:
+    dylib = os.path.realpath(os.path.join(SDK["VULKAN"], "lib", "libvulkan.dylib"))
+    target = os.path.join(GetOutputDir(), "lib", "libvulkan.dylib")
+    if NeedsBuild([target], [dylib]):
+        CopyFile(target, dylib)
+        oscmd('install_name_tool -id @loader_path/../lib/libvulkan.dylib ' + target)
         oscmd('codesign -f -s - ' + target)
         JustBuilt([target], [dylib])
 

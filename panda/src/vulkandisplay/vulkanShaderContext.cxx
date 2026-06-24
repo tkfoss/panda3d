@@ -494,6 +494,7 @@ create_modules(VulkanGraphicsStateGuardian *gsg) {
     }
 
     ShaderModuleSpirV::InstructionStream instructions = transformer.get_result();
+
 #ifndef NDEBUG
     if (!instructions.validate(SPV_ENV_VULKAN_1_0)) {
       success = false;
@@ -869,11 +870,32 @@ fetch_descriptor(VulkanGraphicsStateGuardian *gsg, const Descriptor &desc,
       int view = gsg->get_current_tex_view_offset();
       PT(Texture) texture = desc._binding->fetch_texture(state, id, sampler, view);
 
-      // DBG_FORCE_GENERAL: probe -- sample in GENERAL layout instead of
-      // SHADER_READ_ONLY_OPTIMAL. Tests the theory that the bloom corruption is
-      // a same-image-two-layouts conflict (the bloom image is bound in one draw
-      // as both a storage image (GENERAL) and a sampler (READ_ONLY_OPTIMAL)).
-      VkImageLayout sample_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      // Choose the layout to sample this texture in.  Normally a sampled image
+      // lives in SHADER_READ_ONLY_OPTIMAL.  But a GPU-generated compute image
+      // (one that has a clear color but no loaded pixel data -- RenderPipeline
+      // marks every compute Image this way; same signal as the SFLOAT format
+      // fix) is frequently ALSO bound as a storage image (image2D/image3D), so
+      // it ping-pongs GENERAL (compute write) <-> SHADER_READ_ONLY (sample).
+      // That flip-flop means a sampler descriptor written while the image is in
+      // READ_ONLY is later consumed after a subsequent compute dispatch has put
+      // the image back in GENERAL -> the recorded descriptor layout no longer
+      // matches the image's layout at execution (VUID-vkCmdDraw-None-09600 /
+      // VkImageMemoryBarrier2-oldLayout-01197) -> the sample reads garbage = the
+      // magenta scattering tables (BUG-SCAT).  GENERAL is a valid layout to
+      // sample from, so for these dual-use compute images we sample in GENERAL
+      // and never transition them to READ_ONLY -- the layout stays stable at
+      // GENERAL for both the storage writes and the samples, so there is no
+      // transition to desync.  Scope: a GPU compute image has a clear color
+      // (GPU-initialized) but is NOT a render-to-texture target -- that excludes
+      // raster render targets (the G-buffer etc., which are also clear-colored
+      // but transition COLOR_ATTACHMENT<->READ_ONLY normally), and excludes
+      // ordinary loaded textures (no clear color).  Their READ_ONLY fast path is
+      // untouched.
+      VkImageLayout sample_layout =
+        (texture != nullptr && texture->has_clear_color() &&
+         !texture->get_render_to_texture())
+          ? VK_IMAGE_LAYOUT_GENERAL
+          : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       if (getenv("DBG_FORCE_GENERAL")) {
         sample_layout = VK_IMAGE_LAYOUT_GENERAL;
       }
@@ -979,11 +1001,23 @@ fetch_descriptor(VulkanGraphicsStateGuardian *gsg, const Descriptor &desc,
         access_mask |= VK_ACCESS_2_SHADER_WRITE_BIT;
       }
 
-      VulkanBufferContext *bc;
-      bc = gsg->use_shader_buffer(buffer, desc._pipeline_stage_mask, access_mask);
-
       VkDescriptorBufferInfo &buffer_info = *buffer_infos++;
-      buffer_info.buffer = bc->_buffer;
+
+      VulkanBufferContext *bc = nullptr;
+      if (buffer != nullptr) {
+        bc = gsg->use_shader_buffer(buffer, desc._pipeline_stage_mask, access_mask);
+      }
+
+      if (bc != nullptr) {
+        buffer_info.buffer = bc->_buffer;
+      } else {
+        // No buffer is bound for this storage descriptor.  Writing VK_NULL_HANDLE
+        // is only legal with the nullDescriptor feature, which MoltenVK lacks, so
+        // fall back to the gsg's null buffer (created when nullDescriptor is
+        // unsupported); on devices that do support it, _null_vertex_buffer is
+        // VK_NULL_HANDLE, which is then legal.
+        buffer_info.buffer = gsg->_null_vertex_buffer;
+      }
       buffer_info.offset = 0;
       buffer_info.range = VK_WHOLE_SIZE;
     }

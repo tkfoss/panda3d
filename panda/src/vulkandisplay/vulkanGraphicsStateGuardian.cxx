@@ -497,11 +497,15 @@ reset() {
     return;
   }
 
-  // Create a "null" vertex buffer.  This will be used to store default values
-  // for attributes when they are not bound to a vertex buffer.
+  // Create a "null" buffer.  This is used to store default values for vertex
+  // attributes that are not bound to a vertex buffer, and -- when nullDescriptor
+  // is not supported (e.g. MoltenVK) -- as a stand-in for unbound STORAGE_BUFFER
+  // descriptors so we never write VK_NULL_HANDLE into a descriptor (which is UB
+  // without the nullDescriptor feature; VUID-VkDescriptorBufferInfo-buffer-02998).
   if (!supports_null_descriptor) {
     if (!create_buffer(4, _null_vertex_buffer, _null_vertex_memory,
                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
       vulkandisplay_cat.error()
@@ -5522,7 +5526,15 @@ choose_fb_config(FbConfig &out, FrameBufferProperties &props,
   // pipeline only has one color attachment and the shader's location>=1 outputs
   // are silently dropped (the aux targets stay black).
   for (int i = 0; i < props.get_aux_rgba(); ++i) {
-    out._color_formats.push_back(VK_FORMAT_R8G8B8A8_UNORM);
+    // Must match the VkFormat that create_attachment() ultimately gives the aux
+    // image VIEW.  A bound aux texture is round-tripped through
+    // lookup_image_format()/get_image_format(), and get_image_format() maps an
+    // 8-bit RGBA texture (F_rgba8) to B8G8R8A8_UNORM (Panda's canonical 8-bit
+    // ordering), NOT R8G8B8A8_UNORM.  Announcing R8G8B8A8 here while the view is
+    // B8G8R8A8 makes the pipeline's pColorAttachmentFormats disagree with the
+    // bound attachment (VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910;
+    // seen on sgsfb's MRT G-buffer).  Use the same format the view will have.
+    out._color_formats.push_back(VK_FORMAT_B8G8R8A8_UNORM);
   }
   for (int i = 0; i < props.get_aux_hrgba(); ++i) {
     out._color_formats.push_back(VK_FORMAT_R16G16B16A16_SFLOAT);
@@ -6001,14 +6013,23 @@ make_pipeline(VulkanShaderContext *sc,
   assembly_info.pNext = nullptr;
   assembly_info.flags = 0;
   assembly_info.topology = topology;
-#ifdef __APPLE__
-  // MoltenVK doesn't support disabling primitive restart, squelch warning.
-  assembly_info.primitiveRestartEnable = VK_TRUE;
-#else
+  // Primitive restart is only legal on *_STRIP / *_FAN topologies (and their
+  // adjacency variants); on *_LIST and *_POINT topologies it requires the
+  // primitiveTopologyListRestart feature, which MoltenVK does not support.  So we
+  // must compute a topology-correct static value: enabling it unconditionally on a
+  // list topology is a spec violation (VUID-VkPipelineInputAssemblyStateCreateInfo
+  // -topology-06252).
+#ifndef __APPLE__
   if (_supports_extended_dynamic_state2) {
-    // This is enabled dynamically if needed.
+    // This is enabled dynamically if needed (see do_draw_primitive_with_topology).
     assembly_info.primitiveRestartEnable = VK_FALSE;
-  } else {
+  } else
+#endif
+  {
+    // On Apple the dynamic primitiveRestartEnable path is disabled (MoltenVK), so
+    // this static value is what's used; pick it per-topology rather than blanket TRUE.
+    // (Matches the non-dynamic non-Apple set; restart on triangle strips/fans is left
+    // off to match the established behavior — Panda doesn't emit restart for those.)
     assembly_info.primitiveRestartEnable = (
       topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
       //topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
@@ -6016,7 +6037,6 @@ make_pipeline(VulkanShaderContext *sc,
       topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
       topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY);
   }
-#endif
 
   VkPipelineViewportStateCreateInfo viewport_info;
   viewport_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -6582,7 +6602,16 @@ update_global_descriptor_set() {
   VkWriteDescriptorSet write[1];
   VkDescriptorBufferInfo buffer_info[1];
 
-  buffer_info[i].buffer = _transform_buffer;
+  // The global transform SSBO may not exist yet (it is created lazily the first
+  // time a transform is needed).  Writing VK_NULL_HANDLE to a STORAGE_BUFFER
+  // descriptor is only legal with the nullDescriptor feature, which MoltenVK
+  // lacks (VUID-VkDescriptorBufferInfo-buffer-02998), so fall back to the null
+  // buffer (which carries STORAGE usage when nullDescriptor is unsupported; on
+  // devices that do support it, _null_vertex_buffer is itself VK_NULL_HANDLE,
+  // which is then legal).
+  buffer_info[i].buffer = (_transform_buffer != VK_NULL_HANDLE)
+                        ? _transform_buffer
+                        : _null_vertex_buffer;
   buffer_info[i].offset = 0;
   buffer_info[i].range = VK_WHOLE_SIZE;
 
@@ -7051,13 +7080,28 @@ get_image_format(const Texture *texture) const {
   // A 16-bit floating-point render target (e.g. RenderPipeline's G-buffer/HDR
   // aux) must map F_rgba16/F_rgb16/F_rg16/F_r16 + T_float to the SFLOAT VkFormat,
   // not UNORM/SNORM -- otherwise create_attachment's VkFormat->Texture::Format->
-  // VkFormat round-trip silently downgrades it (BUG C).  This is gated on
-  // render-to-texture so that loaded 16-bit textures that carry a float component
-  // type but normalized data (e.g. simplepbr's baked brdf_lut / filtered env map)
-  // keep their existing UNORM/SNORM interpretation and are not disturbed.
+  // VkFormat round-trip silently downgrades it (BUG C).
+  //
+  // The same applies to GPU-generated STORAGE images written by compute as
+  // image2D/image3D (e.g. RenderPipeline's precomputed scattering tables
+  // Img3D-scat-inscat / Img2D-scat-irrad): the shader declares them rgba16f
+  // (SFLOAT), so the view format must match exactly or every load/store yields
+  // undefined values (BUG F5).  Those images are NOT render-to-texture, so the
+  // old render-to-texture-only gate missed them.
+  //
+  // We therefore treat a float-component texture as SFLOAT when it is either a
+  // render target OR a GPU-initialized image (it has a clear color but no loaded
+  // pixel data -- RenderPipeline marks every compute Image this way via
+  // set_clear_color() at construction).  Loaded 16-bit textures that have a float
+  // component type but hold normalized pixel data (e.g. simplepbr's baked
+  // brdf_lut / filtered env map) have no clear color and are not render targets,
+  // so they keep their existing UNORM/SNORM interpretation and are not disturbed.
+  // (has_clear_color() is set at construction, so unlike has_ram_image() it does
+  // not race the upload of a loaded texture.)
   bool is_float = (component_type == Texture::T_float ||
                    component_type == Texture::T_half_float)
-                  && texture->get_render_to_texture();
+                  && (texture->get_render_to_texture() ||
+                      texture->has_clear_color());
 
   switch (compression) {
   case Texture::CM_on:
