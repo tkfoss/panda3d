@@ -1342,6 +1342,7 @@ create_texture(VulkanTextureContext *tc) {
 
   bool pack_bgr8 = false;
   bool swap_bgra8 = false;
+  int expand_rgb_cw = 0;  // per-channel byte width if expanding RGB->RGBA, else 0
   if (!supported) {
     // Not fully supported.  Can we convert it to a format that is supported?
     // We pick ones with mandatory support in Vulkan; no need to check things.
@@ -1369,6 +1370,27 @@ create_texture(VulkanTextureContext *tc) {
     case VK_FORMAT_B8G8R8_SRGB:
       format = VK_FORMAT_R8G8B8A8_SRGB;
       pack_bgr8 = true;
+      break;
+
+    // 16-bit and float 3-channel RGB are (almost) never supported as sampled
+    // images, so expand them to the 4-channel equivalent on upload.  Unlike the
+    // 8-bit B8G8R8 case above these keep RGB channel order (Panda stores >8-bit
+    // RGB as RGB, not BGR) and need no byte swap -- just an appended alpha.
+    case VK_FORMAT_R16G16B16_UNORM:
+      format = VK_FORMAT_R16G16B16A16_UNORM;
+      expand_rgb_cw = 2;
+      break;
+    case VK_FORMAT_R16G16B16_SNORM:
+      format = VK_FORMAT_R16G16B16A16_SNORM;
+      expand_rgb_cw = 2;
+      break;
+    case VK_FORMAT_R16G16B16_SFLOAT:
+      format = VK_FORMAT_R16G16B16A16_SFLOAT;
+      expand_rgb_cw = 2;
+      break;
+    case VK_FORMAT_R32G32B32_SFLOAT:
+      format = VK_FORMAT_R32G32B32A32_SFLOAT;
+      expand_rgb_cw = 4;
       break;
 
     case VK_FORMAT_B8G8R8A8_UNORM:
@@ -1519,6 +1541,7 @@ create_texture(VulkanTextureContext *tc) {
     tc->_mipmap_end = mipmap_end;
     tc->_generate_mipmaps = generate_mipmaps;
     tc->_pack_bgr8 = pack_bgr8;
+    tc->_expand_rgb_component_width = expand_rgb_cw;
     tc->_supports_render_to_texture = render_to_texture;
 
     if (is_depth) {
@@ -1719,6 +1742,7 @@ create_texture(VulkanTextureContext *tc) {
     tc->_buffer_views = std::move(buffer_views);
     tc->_block = std::move(block);
     tc->_pack_bgr8 = pack_bgr8;
+    tc->_expand_rgb_component_width = expand_rgb_cw;
     tc->_swap_bgra8 = swap_bgra8;
     tc->_supports_render_to_texture = render_to_texture;
   }
@@ -1820,7 +1844,8 @@ upload_texture(VulkanTextureContext *tc, CompletionToken token) {
         buffer_size += optimal_align - remain;
       }
 
-      if (tc->_pack_bgr8) {
+      if (tc->_pack_bgr8 || tc->_expand_rgb_component_width != 0) {
+        // 3 channels -> 4 channels (same ratio for 8/16/32-bit components).
         buffer_size += texture->get_ram_mipmap_image_size(n) / 3 * 4;
       } else {
         buffer_size += texture->get_ram_mipmap_image_size(n);
@@ -1886,6 +1911,34 @@ upload_texture(VulkanTextureContext *tc, CompletionToken token) {
 
         for (; src < src_end; src += 3) {
           *dest32++ = 0xff000000 | (src[0] << 16) | (src[1] << 8) | src[2];
+        }
+        src_size = src_size / 3 * 4;
+      }
+      else if (tc->_expand_rgb_component_width != 0) {
+        // Expand 3-channel RGB to 4-channel RGBA for the 16-bit/float RGB
+        // formats Vulkan doesn't support as 3-channel images.  Keep RGB order
+        // (no BGR swap -- Panda stores >8-bit RGB as RGB) and append an opaque
+        // alpha.  memcpy per component keeps this safe for any src alignment.
+        const unsigned int cw = tc->_expand_rgb_component_width;
+        // Opaque-alpha bit pattern per destination format.  Default 0xff.. is 1.0
+        // for UNORM, but for SNORM 0xffff is int16 -1 (~ -0.00003), so the opaque
+        // value there is the positive max 0x7fff; and the float formats use their
+        // 1.0 encodings.  (The expanded alpha channel is normally unused, but a
+        // shader that samples .a should still read 1.0, not 0/-1.)
+        uint8_t alpha[4] = {0xff, 0xff, 0xff, 0xff};  // 1.0 for UNORM
+        if (tc->_format == VK_FORMAT_R16G16B16A16_SFLOAT) {
+          alpha[0] = 0x00; alpha[1] = 0x3c;            // half 1.0
+        } else if (tc->_format == VK_FORMAT_R32G32B32A32_SFLOAT) {
+          alpha[0] = 0x00; alpha[1] = 0x00; alpha[2] = 0x80; alpha[3] = 0x3f;  // float 1.0
+        } else if (tc->_format == VK_FORMAT_R16G16B16A16_SNORM) {
+          alpha[0] = 0xff; alpha[1] = 0x7f;            // int16 +32767 = +1.0
+        }
+        const uint8_t *s = src;
+        const uint8_t *s_end = src + src_size;
+        uint8_t *d = dest;
+        for (; s < s_end; s += 3 * cw) {
+          memcpy(d, s, 3 * cw); d += 3 * cw;
+          memcpy(d, alpha, cw); d += cw;
         }
         src_size = src_size / 3 * 4;
       }
@@ -5426,16 +5479,37 @@ choose_fb_config(FbConfig &out, FrameBufferProperties &props,
           formats[i].rgb >= props.get_color_bits() &&
           formats[i].has_float >= props.get_float_color()) {
 
-        // Keep the original hardcoded sRGB color attachment.  This is the
-        // behaviour under which RenderPipeline's whole deferred/composite chain
-        // renders correctly (mid-pipeline stages verified by eye).  (The "BUG 19"
-        // change to formats[i].format -- and a sRGB/float split of it -- both
-        // regressed RP across the board; see git history.)  The SGSFB float
-        // G-buffer clamp is handled separately and must NOT be re-addressed by
-        // changing this generic offscreen-color chooser.
-        out._color_formats.push_back(VK_FORMAT_B8G8R8A8_SRGB);
-        props.set_rgba_bits(formats[i].r, formats[i].g,
-                            formats[i].b, formats[i].a);
+        // Honor the actually-requested linear/float format for offscreen color
+        // targets instead of forcing B8G8R8A8_SRGB.  An HDR deferred renderer
+        // (RenderPipeline) asks for float/linear G-buffer, lighting and tonemap
+        // intermediates; forcing 8-bit sRGB silently downgraded the whole chain
+        // (washout, clamped material, magenta -- "BUG C").  sRGB is applied only
+        // when actually requested (the props.get_srgb_color() branch above) or on
+        // the swapchain/present target (the preferred_format branch).
+        //
+        // This relies on the get_image_format() float fix below: create_attachment
+        // round-trips a render target's format VkFormat -> Texture::Format ->
+        // VkFormat, and without that fix R16G16B16A16_SFLOAT came back as SNORM.
+        // An earlier attempt to change this line WITHOUT that fix is what
+        // "regressed RP across the board".
+        if (!props.get_float_color() && props.get_blue_bits() > 0 &&
+            formats[i].rgb < 24) {
+          // A multi-channel colour buffer that under-specified its bit depth
+          // (e.g. make_cube_map's reflection buffer requesting 5,5,5,1) matched a
+          // narrow packed format (R5G6B5 / A1R5G5B5).  GL rounds such requests up
+          // to RGBA8; honoring the literal 5-bit format caused heavy banding and
+          // colour shimmer in complexpbr's dynamic cube reflections.  Round up to
+          // the 8-bit sRGB LDR-colour baseline (which is what these buffers
+          // rendered correctly under before).  Float/HDR targets (RP) take the
+          // branch above and keep their float format; single-channel data buffers
+          // (e.g. RP's R8 AO) have blue_bits == 0 and are unaffected.
+          out._color_formats.push_back(VK_FORMAT_B8G8R8A8_SRGB);
+          props.set_rgba_bits(8, 8, 8, 8);
+        } else {
+          out._color_formats.push_back(formats[i].format);
+          props.set_rgba_bits(formats[i].r, formats[i].g,
+                              formats[i].b, formats[i].a);
+        }
         break;
       }
     }
@@ -5797,7 +5871,17 @@ make_pipeline(VulkanShaderContext *sc,
       }
       break;
     case GeomEnums::NT_uint16:
-      attrib_desc[i].format = (VkFormat)(VK_FORMAT_R16_UINT + 7 * fmt_jump);
+      // A C_color column (e.g. a glTF mesh with a 16-bit vertex color) must be
+      // normalized (65535 -> 1.0), exactly as the NT_uint8 path above and as the
+      // GL backend does for any C_color column regardless of integer width.
+      // Otherwise the *_UINT format below is later remapped to *_USCALED (see
+      // the float-input remap), which reads the raw 65535 as 65535.0 and blows
+      // out vertex-colored geometry to white.
+      if (normalized) {
+        attrib_desc[i].format = (VkFormat)(VK_FORMAT_R16_UNORM + 7 * fmt_jump);
+      } else {
+        attrib_desc[i].format = (VkFormat)(VK_FORMAT_R16_UINT + 7 * fmt_jump);
+      }
       break;
     case GeomEnums::NT_uint32:
       attrib_desc[i].format = (VkFormat)(VK_FORMAT_R32_UINT + 3 * fmt_jump);
@@ -5836,7 +5920,13 @@ make_pipeline(VulkanShaderContext *sc,
       }
       break;
     case GeomEnums::NT_int16:
-      attrib_desc[i].format = (VkFormat)(VK_FORMAT_R16_SINT + 7 * fmt_jump);
+      // Likewise normalize a signed 16-bit C_color column (-32768..32767 ->
+      // -1..1) rather than reading it as a raw integer.
+      if (normalized) {
+        attrib_desc[i].format = (VkFormat)(VK_FORMAT_R16_SNORM + 7 * fmt_jump);
+      } else {
+        attrib_desc[i].format = (VkFormat)(VK_FORMAT_R16_SINT + 7 * fmt_jump);
+      }
       break;
     case GeomEnums::NT_int32:
       attrib_desc[i].format = (VkFormat)(VK_FORMAT_R32_SINT + 3 * fmt_jump);
@@ -6958,6 +7048,16 @@ get_image_format(const Texture *texture) const {
 
   bool is_signed = !Texture::is_unsigned(component_type);
   bool is_srgb = Texture::is_srgb(format);
+  // A 16-bit floating-point render target (e.g. RenderPipeline's G-buffer/HDR
+  // aux) must map F_rgba16/F_rgb16/F_rg16/F_r16 + T_float to the SFLOAT VkFormat,
+  // not UNORM/SNORM -- otherwise create_attachment's VkFormat->Texture::Format->
+  // VkFormat round-trip silently downgrades it (BUG C).  This is gated on
+  // render-to-texture so that loaded 16-bit textures that carry a float component
+  // type but normalized data (e.g. simplepbr's baked brdf_lut / filtered env map)
+  // keep their existing UNORM/SNORM interpretation and are not disturbed.
+  bool is_float = (component_type == Texture::T_float ||
+                   component_type == Texture::T_half_float)
+                  && texture->get_render_to_texture();
 
   switch (compression) {
   case Texture::CM_on:
@@ -7038,8 +7138,32 @@ get_image_format(const Texture *texture) const {
   case Texture::F_green:
   case Texture::F_blue:
   case Texture::F_alpha:
+    // Honor the component width: these generic formats may carry 16-bit
+    // (T_unsigned_short) or float data, not just 8-bit.  Returning the 8-bit
+    // VkFormat for a wider texture made the upload reinterpret the data at the
+    // wrong stride.
+    if (is_float) {
+      return (texture->get_component_width() >= 4) ? VK_FORMAT_R32_SFLOAT
+                                                   : VK_FORMAT_R16_SFLOAT;
+    }
+    if (texture->get_component_width() >= 2) {
+      return (VkFormat)(VK_FORMAT_R16_UNORM + is_signed);
+    }
     return (VkFormat)(VK_FORMAT_R8_UNORM + is_signed);
   case Texture::F_rgb:
+    // F_rgb is "any RGB"; the data may be 16-bit or float.  Panda stores 8-bit
+    // RGB as BGR (hence B8G8R8) but 16-bit/float RGB as RGB (hence R16G16B16 /
+    // SFLOAT), matching the explicit F_rgb8/F_rgb16 cases below.  Returning the
+    // 8-bit format for a 16-bit texture made the upload read 16-bit data as
+    // 8-bit -> scrambled (RenderPipeline's 64^3 colour-grading LUT -> rainbow).
+    // The 3-channel non-8-bit formats are expanded to RGBA in create_texture().
+    if (is_float) {
+      return (texture->get_component_width() >= 4) ? VK_FORMAT_R32G32B32_SFLOAT
+                                                   : VK_FORMAT_R16G16B16_SFLOAT;
+    }
+    if (texture->get_component_width() >= 2) {
+      return (VkFormat)(VK_FORMAT_R16G16B16_UNORM + is_signed);
+    }
     return (VkFormat)(VK_FORMAT_B8G8R8_UNORM + is_signed);
   case Texture::F_rgb5:
     return VK_FORMAT_B5G6R5_UNORM_PACK16;
@@ -7050,8 +7174,17 @@ get_image_format(const Texture *texture) const {
   case Texture::F_rgb332:
     return VK_FORMAT_B5G6R5_UNORM_PACK16;
   case Texture::F_rgba:
-    return (VkFormat)(VK_FORMAT_B8G8R8A8_UNORM + is_signed);
   case Texture::F_rgbm:
+    // Honor the component width.  8-bit RGBA is stored BGRA (B8G8R8A8); 16-bit
+    // and float RGBA are stored RGBA (R16G16B16A16 / SFLOAT), matching the
+    // explicit F_rgba8/F_rgba16/F_rgba32 cases.
+    if (is_float) {
+      return (texture->get_component_width() >= 4) ? VK_FORMAT_R32G32B32A32_SFLOAT
+                                                   : VK_FORMAT_R16G16B16A16_SFLOAT;
+    }
+    if (texture->get_component_width() >= 2) {
+      return (VkFormat)(VK_FORMAT_R16G16B16A16_UNORM + is_signed);
+    }
     return (VkFormat)(VK_FORMAT_B8G8R8A8_UNORM + is_signed);
   case Texture::F_rgba4:
     return VK_FORMAT_R4G4B4A4_UNORM_PACK16;
@@ -7062,13 +7195,27 @@ get_image_format(const Texture *texture) const {
   case Texture::F_rgba12:
     return (VkFormat)(VK_FORMAT_R16G16B16A16_UNORM + is_signed);
   case Texture::F_luminance:
+    if (is_float) {
+      return (texture->get_component_width() >= 4) ? VK_FORMAT_R32_SFLOAT
+                                                   : VK_FORMAT_R16_SFLOAT;
+    }
+    if (texture->get_component_width() >= 2) {
+      return (VkFormat)(VK_FORMAT_R16_UNORM + is_signed);
+    }
     return (VkFormat)(VK_FORMAT_R8_UNORM + is_signed);
   case Texture::F_luminance_alpha:
-    return (VkFormat)(VK_FORMAT_R8G8_UNORM + is_signed);
   case Texture::F_luminance_alphamask:
+    if (is_float) {
+      return (texture->get_component_width() >= 4) ? VK_FORMAT_R32G32_SFLOAT
+                                                   : VK_FORMAT_R16G16_SFLOAT;
+    }
+    if (texture->get_component_width() >= 2) {
+      return (VkFormat)(VK_FORMAT_R16G16_UNORM + is_signed);
+    }
     return (VkFormat)(VK_FORMAT_R8G8_UNORM + is_signed);
   case Texture::F_rgba16:
-    return (VkFormat)(VK_FORMAT_R16G16B16A16_UNORM + is_signed);
+    return is_float ? VK_FORMAT_R16G16B16A16_SFLOAT
+                    : (VkFormat)(VK_FORMAT_R16G16B16A16_UNORM + is_signed);
   case Texture::F_rgba32:
     return VK_FORMAT_R32G32B32A32_SFLOAT;
   case Texture::F_depth_component:
@@ -7080,11 +7227,14 @@ get_image_format(const Texture *texture) const {
   case Texture::F_depth_component32:
     return VK_FORMAT_D32_SFLOAT;
   case Texture::F_r16:
-    return (VkFormat)(VK_FORMAT_R16_UNORM + is_signed);
+    return is_float ? VK_FORMAT_R16_SFLOAT
+                    : (VkFormat)(VK_FORMAT_R16_UNORM + is_signed);
   case Texture::F_rg16:
-    return (VkFormat)(VK_FORMAT_R16G16_UNORM + is_signed);
+    return is_float ? VK_FORMAT_R16G16_SFLOAT
+                    : (VkFormat)(VK_FORMAT_R16G16_UNORM + is_signed);
   case Texture::F_rgb16:
-    return (VkFormat)(VK_FORMAT_R16G16B16_UNORM + is_signed);
+    return is_float ? VK_FORMAT_R16G16B16_SFLOAT
+                    : (VkFormat)(VK_FORMAT_R16G16B16_UNORM + is_signed);
   case Texture::F_srgb:
     // Three-component sRGB.  Return the matching three-byte format so that the
     // staging buffer is sized for the (three-component) RAM image; create_texture
@@ -7126,6 +7276,13 @@ get_image_format(const Texture *texture) const {
   case Texture::F_rgb10_a2:
     return (VkFormat)(VK_FORMAT_A2R10G10B10_UNORM_PACK32 + is_signed);
   case Texture::F_rg:
+    if (is_float) {
+      return (texture->get_component_width() >= 4) ? VK_FORMAT_R32G32_SFLOAT
+                                                   : VK_FORMAT_R16G16_SFLOAT;
+    }
+    if (texture->get_component_width() >= 2) {
+      return (VkFormat)(VK_FORMAT_R16G16_UNORM + is_signed);
+    }
     return (VkFormat)(VK_FORMAT_R8G8_UNORM + is_signed);
   case Texture::F_r16i:
     return (VkFormat)(VK_FORMAT_R16_UINT + is_signed);

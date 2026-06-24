@@ -66,6 +66,12 @@ public:
   bool _generate_mipmaps = false;
   bool _pack_bgr8 = false;
   bool _swap_bgra8 = false;
+  // Expand a 3-channel (RGB) texture to 4-channel (RGBA) on upload, for the
+  // 16-bit / float RGB formats Vulkan doesn't support as 3-channel sampled
+  // images.  Unlike _pack_bgr8 (8-bit, also swaps BGR->RGB), this keeps RGB
+  // order and is component-width aware.  Holds the per-channel byte width
+  // (2 or 4) to expand, or 0 when not expanding.
+  unsigned int _expand_rgb_component_width = 0;
   bool _supports_render_to_texture = false;
 
   // Just for debugging.  It's -1 if it's not a swapchain image.

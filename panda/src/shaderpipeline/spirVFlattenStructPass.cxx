@@ -58,6 +58,7 @@ transform_definition_op(Instruction op) {
       struct_def.clear();
       delete_id(struct_var_id);
 
+      int member_location = struct_location;
       for (size_t mi = 0; mi < _struct_type->get_num_members(); ++mi) {
         const ShaderType::Struct::Member &member = _struct_type->get_member(mi);
 
@@ -74,12 +75,18 @@ transform_definition_op(Instruction op) {
           variable_def._name = struct_var_name + "." + member.name;
         }
         if (struct_location >= 0) {
-          // Assign decorations to the individual members.
-          int location = struct_location + mi;
-          variable_def._location = location;
+          // Assign decorations to the individual members.  Advance the location
+          // by the number of locations each member actually consumes: a member
+          // that is a matrix, array or (array-of-)struct spans multiple
+          // locations, so using the member index here would make consecutive
+          // members overlap and produce duplicate locations (which the GL
+          // linker rejects and Vulkan silently mis-packs).
+          variable_def._location = member_location;
 
           add_annotation(spv::OpDecorate,
-            {variable_id, spv::DecorationLocation, (uint32_t)location});
+            {variable_id, spv::DecorationLocation, (uint32_t)member_location});
+
+          member_location += member.type->get_num_interface_locations();
         }
 
         _member_ids[mi] = variable_id;
