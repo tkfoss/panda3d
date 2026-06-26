@@ -29,9 +29,11 @@
 #include "pta_LMatrix4.h"
 #include "pta_LVecBase4.h"
 #include "pta_float.h"
+#include "colorWriteAttrib.h"
 #include "scissorAttrib.h"
 #include "shader.h"
 #include "shaderAttrib.h"
+#include "stencilAttrib.h"
 #include "texture.h"
 #include "textureAttrib.h"
 #include "texturePool.h"
@@ -60,9 +62,13 @@ static const char *s_vert_passthrough = R"GLSL(
 #version 150
 in vec3 p3d_Vertex;
 in vec2 p3d_MultiTexCoord0;
+uniform vec2 u_uv_offset;  // default (0,0)
+uniform vec2 u_uv_scale;   // default (1,1)
 out vec2 v_uv;
 void main() {
-    v_uv = p3d_MultiTexCoord0;
+    // Sample a sub-rectangle of the source: uv = offset + texcoord * scale.
+    // With offset=0, scale=1 this is the identity (full-texture blit).
+    v_uv = u_uv_offset + p3d_MultiTexCoord0 * u_uv_scale;
     gl_Position = vec4(p3d_Vertex.xy, 0.0, 1.0);
 }
 )GLSL";
@@ -330,6 +336,8 @@ make_layer_buffer(GraphicsOutput *parent_window, const std::string &name) {
   fbp.set_rgb_color(1);
   fbp.set_rgba_bits(8, 8, 8, 8);
   fbp.set_depth_bits(0);
+  // 8 stencil bits for clip-mask (border-radius / transform) clipping.
+  fbp.set_stencil_bits(8);
 
   int w = parent_window->get_x_size();
   int h = parent_window->get_y_size();
@@ -363,6 +371,54 @@ make_layer_buffer(GraphicsOutput *parent_window, const std::string &name) {
   return lb;
 }
 
+/**
+ * Closes a LayerBuffer's offscreen GraphicsOutput and frees the struct.  The
+ * GraphicsEngine retains a reference to every buffer it creates, so the FBO
+ * outlives the LayerBuffer struct unless explicitly closed here.
+ */
+static void
+destroy_layer_buffer(RmlRenderInterface::LayerBuffer *lb) {
+  if (lb == nullptr) return;
+  if (lb->_buf != nullptr) {
+    lb->_buf->request_close();
+  }
+  delete lb;
+}
+
+// ===========================================================================
+// Destructor / shutdown — release the layer pool
+// ===========================================================================
+
+/**
+ *
+ */
+RmlRenderInterface::
+~RmlRenderInterface() {
+  shutdown();
+}
+
+/**
+ * Releases the layer-buffer pool and scratch buffers.  Idempotent.  Called by
+ * the destructor and (preferably) explicitly by RmlRegion before the engine
+ * tears down, so the offscreen buffers are closed while the GraphicsEngine is
+ * still valid.
+ */
+void RmlRenderInterface::
+shutdown() {
+  for (LayerBuffer *lb : _layer_pool) {
+    destroy_layer_buffer(lb);
+  }
+  _layer_pool.clear();
+
+  for (int i = 0; i < 2; ++i) {
+    destroy_layer_buffer(_scratch[i]);
+    _scratch[i] = nullptr;
+  }
+
+  _layer_stack.clear();
+  _window = nullptr;
+}
+
 // ===========================================================================
 // init() — allocate layer pool
 // ===========================================================================
@@ -376,16 +432,29 @@ init(GraphicsOutput *window) {
   nassertv(window != nullptr);
   _window = window;
 
-  for (int i = 0; i < 4; ++i) {
-    LayerBuffer *lb = make_layer_buffer(window,
-      std::string("rmlui-layer-") + std::to_string(i));
-    if (lb) _layer_pool.push_back(lb);
-  }
+  grow_pool(rmlui_layer_pool_size);
+
   for (int i = 0; i < 2; ++i) {
     _scratch[i] = make_layer_buffer(window,
       std::string("rmlui-scratch-") + std::to_string(i));
     // Mark permanently in-use so scratch buffers are never returned to the pool.
     if (_scratch[i]) _scratch[i]->_in_use = true;
+  }
+}
+
+/**
+ * Grows the layer-buffer pool to at least target_size entries.  MUST be called
+ * outside of context->Render() (i.e. while no layer FBO frame is open), because
+ * GraphicsOutput::make_texture_buffer re-enters GraphicsEngine::open_windows;
+ * doing that mid-frame corrupts GL state and produces a white frame.
+ */
+void RmlRenderInterface::
+grow_pool(size_t target_size) {
+  while (_layer_pool.size() < target_size) {
+    LayerBuffer *lb = make_layer_buffer(_window,
+      std::string("rmlui-layer-") + std::to_string(_layer_pool.size()));
+    if (lb == nullptr) break;
+    _layer_pool.push_back(lb);
   }
 }
 
@@ -426,7 +495,18 @@ ensure_shaders() {
   auto make_state = [&](const char *vert, const char *frag,
                         CPT(RenderState) blend) -> CPT(RenderState) {
     PT(Shader) sh = Shader::make(Shader::SL_GLSL, vert, frag);
-    return blend->add_attrib(ShaderAttrib::make(sh));
+    CPT(RenderState) st = blend->add_attrib(ShaderAttrib::make(sh));
+    // Identity UV remap default for the passthrough vertex shader (sampling the
+    // full source); snapshot_texture overrides these to crop a sub-rectangle.
+    if (vert == s_vert_passthrough) {
+      CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
+      sa = DCAST(ShaderAttrib, sa)->set_shader_input(
+        InternalName::make("u_uv_offset"), LVecBase2f(0.f, 0.f));
+      sa = DCAST(ShaderAttrib, sa)->set_shader_input(
+        InternalName::make("u_uv_scale"), LVecBase2f(1.f, 1.f));
+      st = st->add_attrib(sa);
+    }
+    return st;
   };
 
   _shader_passthrough  = make_state(s_vert_passthrough, s_frag_passthrough,  blend_over());
@@ -443,50 +523,50 @@ ensure_shaders() {
 // ===========================================================================
 
 /**
- * Returns an unused LayerBuffer from the pool, growing the pool if needed.
+ * Returns an unused LayerBuffer from the pool, or nullptr if the pool is
+ * exhausted.
+ *
+ * The pool is NEVER grown here: that would allocate a GraphicsBuffer mid-frame
+ * (re-entering GraphicsEngine::open_windows while the main window's frame is
+ * open), which corrupts GL state and produces a white frame.  Instead, an
+ * exhausted allocation is recorded and the pool is grown before the NEXT frame
+ * in render().  Callers (PushLayer / apply_filters) handle nullptr gracefully.
  */
 RmlRenderInterface::LayerBuffer *RmlRenderInterface::
 alloc_layer() {
   for (LayerBuffer *lb : _layer_pool) {
     if (!lb->_in_use && lb->_tex != nullptr) {
       lb->_in_use = true;
+      ++_layers_in_use;
+      _peak_layers_in_use = std::max(_peak_layers_in_use, _layers_in_use);
       return lb;
     }
   }
-  LayerBuffer *lb = make_layer_buffer(
-    _window, "rmlui-layer-dyn-" + std::to_string(_layer_pool.size()));
-  if (lb) {
-    lb->_in_use = true;
-    _layer_pool.push_back(lb);
+  // Pool exhausted this frame.  Remember the shortfall so render() can grow the
+  // pool before the next frame, and degrade gracefully (one missing effect)
+  // rather than allocating a buffer mid-frame.
+  _peak_layers_in_use = std::max(_peak_layers_in_use, _layers_in_use + 1);
+  if (!_pool_exhausted) {
+    _pool_exhausted = true;
+    rmlui_cat.warning()
+      << "RmlUi layer pool exhausted (" << _layer_pool.size()
+      << " buffers); growing before next frame.  Increase rmlui-layer-pool-size "
+      << "to avoid a dropped effect on this frame.\n";
   }
-  return lb;
+  return nullptr;
 }
 
 /**
- * Returns a layer buffer to the pool.  If the pool has grown past the initial
- * 4-buffer watermark and this buffer was a dynamically-allocated overflow
- * entry, delete it to shrink the pool back down.
+ * Returns a layer buffer to the pool.
  */
 void RmlRenderInterface::
 free_layer(LayerBuffer *lb) {
   nassertv(lb != nullptr);
-  lb->_in_use    = false;
-  lb->_frame_open = false;
-
-  static const size_t POOL_HWM = 4;
-  if (_layer_pool.size() > POOL_HWM) {
-    for (auto it = _layer_pool.end(); it != _layer_pool.begin(); ) {
-      --it;
-      LayerBuffer *candidate = *it;
-      if (!candidate->_in_use) {
-        _layer_pool.erase(it);
-        if (candidate->_buf) candidate->_buf->request_close();
-        delete candidate;
-        if (_layer_pool.size() <= POOL_HWM) break;
-        it = _layer_pool.end();
-      }
-    }
+  if (lb->_in_use && _layers_in_use > 0) {
+    --_layers_in_use;
   }
+  lb->_in_use     = false;
+  lb->_frame_open = false;
 }
 
 /**
@@ -505,29 +585,84 @@ get_layer(Rml::LayerHandle handle) {
 
 /**
  * Binds lb's FBO as the current render target and clears to transparent black.
+ *
+ * Prefers the GSG's within-frame push_render_target() (no nested begin_frame),
+ * which is the only correct path on backends like Vulkan that allow one open
+ * frame at a time.  Falls back to nesting begin_frame() on backends (GL) that
+ * report push_render_target unsupported.
  */
 void RmlRenderInterface::
-begin_layer(LayerBuffer *lb) {
+bind_target(LayerBuffer *lb, bool clear) {
   nassertv(lb != nullptr && _gsg != nullptr && _thread != nullptr);
   if (lb->_frame_open) return;
 
+  // On backends that can switch the render target within an open frame (Vulkan),
+  // ALWAYS use push_render_target — never nest begin_frame (which would assert
+  // with a frame already open).  A push failure there is a transient error: skip
+  // this layer (the effect degrades) rather than crash.
+  if (_gsg->get_supports_render_target_switch()) {
+    if (_gsg->push_render_target(lb->_buf, lb->_dr, clear)) {
+      lb->_used_push  = true;
+      lb->_frame_open = true;
+      DisplayRegionPipelineReader dr_reader(lb->_dr, _thread);
+      _gsg->prepare_display_region(&dr_reader);
+    } else {
+      rmlui_cat.warning() << "push_render_target failed; skipping layer\n";
+    }
+    return;
+  }
+
+  // Fallback (GL and other backends that allow a nested begin_frame).
+  lb->_used_push = false;
   if (!lb->_buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
     rmlui_cat.error() << "begin_frame failed on layer buffer\n";
     return;
   }
   lb->_frame_open = true;
 
-  lb->_buf->clear(_thread);
+  if (clear) {
+    lb->_buf->clear(_thread);
+  }
   DisplayRegionPipelineReader dr_reader(lb->_dr, _thread);
   _gsg->prepare_display_region(&dr_reader);
 }
 
+void RmlRenderInterface::
+begin_layer(LayerBuffer *lb) {
+  bind_target(lb, /*clear=*/true);
+}
+
 /**
- * Ends lb's frame (flushing its FBO to texture), then rebinds dest.
- * dest may be nullptr to rebind the main window.
+ * Ends lb's render pass (flushing its texture), then makes dest the active
+ * target.  dest may be nullptr to return to the previously-active target (the
+ * parent layer or the main window).
  */
 void RmlRenderInterface::
 end_layer(LayerBuffer *lb, LayerBuffer *dest) {
+  // The unbind path is chosen by the BACKEND capability, not by per-buffer flags:
+  // on a render-target-switch backend (Vulkan) a frame is already open and a
+  // nested begin_frame would assert, so we must never take the GL fallback there
+  // — even when lb's push failed (lb->_frame_open == false), in which case the
+  // target was never switched and there is nothing to unbind.
+  if (_gsg != nullptr && _gsg->get_supports_render_target_switch()) {
+    if (lb != nullptr && lb->_frame_open) {
+      // pop_render_target() restores the target active before lb's push (the
+      // parent layer or the window) — the stack handles the rebind.
+      _gsg->pop_render_target();
+      lb->_frame_open = false;
+      lb->_used_push  = false;
+    }
+    // Make dest active if requested and not already (e.g. CompositeLayers dest).
+    if (dest != nullptr && !dest->_frame_open) {
+      bind_target(dest, /*clear=*/false);
+    } else if (dest != nullptr) {
+      DisplayRegionPipelineReader dr_reader(dest->_dr, _thread);
+      _gsg->prepare_display_region(&dr_reader);
+    }
+    return;
+  }
+
+  // Fallback (GL and other backends that allow a nested begin_frame).
   if (lb != nullptr && lb->_frame_open) {
     lb->_buf->end_frame(GraphicsOutput::FM_render, _thread);
     lb->_frame_open = false;
@@ -569,6 +704,20 @@ render(Rml::Context *context, CullTraverser *trav,
   _gsg    = gsg;
   _thread = current_thread;
 
+  // Grow the pool here (between frames, with no layer FBO frame open) if a
+  // previous frame ran out of buffers.  Allocating a GraphicsBuffer mid-frame
+  // re-enters GraphicsEngine::open_windows and corrupts GL state, so it must
+  // never happen during context->Render() below.  Headroom = peak concurrent
+  // use plus the two implicit borrows snapshot_texture / drop-shadow may add.
+  if (_pool_exhausted) {
+    size_t target = std::max((size_t)rmlui_layer_pool_size,
+                             (size_t)_peak_layers_in_use + 2);
+    grow_pool(target);
+    _pool_exhausted = false;
+  }
+  _layers_in_use = 0;
+  _peak_layers_in_use = 0;
+
   _net_transform = trav->get_world_transform();
   // RmlUi v6 outputs premultiplied alpha (vertex colours are ColourbPremultiplied
   // and font/image textures are premultiplied), so blend with src factor O_one,
@@ -605,8 +754,7 @@ render(Rml::Context *context, CullTraverser *trav,
     if (top._handle != 0) {
       LayerBuffer *lb = get_layer(top._handle);
       if (lb && lb->_frame_open) {
-        lb->_buf->end_frame(GraphicsOutput::FM_render, _thread);
-        lb->_frame_open = false;
+        end_layer(lb, nullptr);  // push-aware
       }
       free_layer(lb);
     }
@@ -670,6 +818,12 @@ make_geom(Rml::Span<const Rml::Vertex> vertices,
  */
 void RmlRenderInterface::
 render_geom(const Geom *geom, const RenderState *state, Rml::Vector2f translation) {
+  // If the active layer failed to bind (its buffer couldn't be opened), drop its
+  // geometry instead of drawing it into the still-active parent target.
+  if (!_layer_stack.empty() && _layer_stack.back()._suppressed) {
+    return;
+  }
+
   LVector3 off = LVector3::right() * translation.x + LVector3::up() * translation.y;
 
   CPT(RenderState) full = _net_state->compose(state);
@@ -681,6 +835,16 @@ render_geom(const Geom *geom, const RenderState *state, Rml::Vector2f translatio
       1.f - r.Bottom() / (PN_stdfloat)_dimensions.y,
       1.f - r.Top()    / (PN_stdfloat)_dimensions.y);
     full = full->add_attrib(ScissorAttrib::make(sc));
+  }
+
+  // Apply the clip-mask stencil test, unless this draw is itself writing the
+  // mask (in which case `state` already carries a StencilAttrib).
+  if (_clip_mask_active &&
+      full->get_attrib(StencilAttrib::get_class_slot()) == nullptr) {
+    full = full->add_attrib(StencilAttrib::make(
+      true, RenderAttrib::M_equal,
+      StencilAttrib::SO_keep, StencilAttrib::SO_keep, StencilAttrib::SO_keep,
+      _clip_mask_ref, ~0u, /*write_mask=*/0u));
   }
 
   CPT(TransformState) model =
@@ -932,6 +1096,95 @@ SetTransform(const Rml::Matrix4f *transform) {
 }
 
 // ===========================================================================
+// Clip mask — non-rectangular clipping via the stencil buffer
+// ===========================================================================
+
+/**
+ * Enables or disables stencil-based clip masking for subsequent geometry.
+ * While enabled, render_geom() composes a stencil test that passes only where
+ * the clip mask (written by RenderToClipMask) is set.
+ */
+void RmlRenderInterface::
+EnableClipMask(bool enable) {
+  _clip_mask_active = enable;
+  if (enable) {
+    // Reset the reference for a fresh mask; RenderToClipMask(Set) clears the
+    // stencil and writes this value, Intersect raises it.
+    _clip_mask_ref = 1;
+
+    // Clip masking on the BASE layer writes/tests the main window's stencil
+    // buffer; if the window was created without stencil bits the mask silently
+    // has no effect (content is left unclipped).  Layer buffers always allocate
+    // 8 stencil bits, so masking inside a pushed layer still works.  Warn once
+    // so a missing window stencil buffer isn't a silent mystery.
+    if (!_warned_no_stencil && _layer_stack.size() <= 1 && _window != nullptr &&
+        _window->get_fb_properties().get_stencil_bits() == 0) {
+      _warned_no_stencil = true;
+      rmlui_cat.warning()
+        << "border-radius / transform clipping needs a stencil buffer, but the "
+           "window has none (framebuffer-stencil-bits 0).  Such clipping will "
+           "be ignored on the base layer.  Request stencil bits on the window "
+           "(e.g. FrameBufferProperties::set_stencil_bits(8)).\n";
+    }
+  }
+}
+
+/**
+ * Writes the given geometry into the stencil buffer to build the clip mask.
+ * Mirrors the reference backend's stencil logic, expressed as StencilAttribs so
+ * it flows through Panda's deferred cull/draw pipeline in submission order.
+ */
+void RmlRenderInterface::
+RenderToClipMask(Rml::ClipMaskOperation operation,
+                 Rml::CompiledGeometryHandle geometry,
+                 Rml::Vector2f translation) {
+  CompiledGeometry *cg = (CompiledGeometry *)geometry;
+  if (cg == nullptr) return;
+
+  CPT(RenderAttrib) stencil;
+  switch (operation) {
+  case Rml::ClipMaskOperation::Set:
+    // Clear the stencil to 0, write _clip_mask_ref (1) where geometry covers.
+    _clip_mask_ref = 1;
+    stencil = StencilAttrib::make_with_clear(
+      true, RenderAttrib::M_always,
+      StencilAttrib::SO_keep, StencilAttrib::SO_keep, StencilAttrib::SO_replace,
+      _clip_mask_ref, ~0u, ~0u,
+      /*clear=*/true, /*clear_value=*/0);
+    break;
+
+  case Rml::ClipMaskOperation::SetInverse:
+    // Clear the stencil to 1, write 0 where geometry covers; the test for
+    // _clip_mask_ref (1) then passes only *outside* the geometry.
+    _clip_mask_ref = 1;
+    stencil = StencilAttrib::make_with_clear(
+      true, RenderAttrib::M_always,
+      StencilAttrib::SO_keep, StencilAttrib::SO_keep, StencilAttrib::SO_replace,
+      /*reference=*/0, ~0u, ~0u,
+      /*clear=*/true, /*clear_value=*/1);
+    break;
+
+  case Rml::ClipMaskOperation::Intersect:
+    // Increment the stencil where geometry covers; raise the test reference so
+    // only pixels covered by every intersected mask pass.
+    ++_clip_mask_ref;
+    stencil = StencilAttrib::make(
+      true, RenderAttrib::M_always,
+      StencilAttrib::SO_keep, StencilAttrib::SO_keep, StencilAttrib::SO_increment,
+      _clip_mask_ref - 1, ~0u, ~0u);
+    break;
+
+  default:
+    return;
+  }
+
+  // Mask writes touch only the stencil buffer, never color.
+  CPT(RenderState) state = RenderState::make(
+    stencil, ColorWriteAttrib::make(ColorWriteAttrib::C_off));
+  render_geom(cg->_geom, state, translation);
+}
+
+// ===========================================================================
 // Layer interface — PushLayer / CompositeLayers / PopLayer
 // ===========================================================================
 
@@ -966,6 +1219,9 @@ PushLayer() {
   LayerEntry entry;
   entry._handle  = handle;
   entry._scissor = _scissor_rect;
+  // If the layer's buffer did not bind (push_render_target failed), suppress its
+  // geometry so it isn't drawn into the still-active parent target.
+  entry._suppressed = !lb->_frame_open;
   _layer_stack.push_back(entry);
 
   return handle;
@@ -988,16 +1244,12 @@ CompositeLayers(Rml::LayerHandle source_handle,
   end_layer(src_lb, nullptr);
   PT(Texture) result = apply_filters(src_lb->_tex, filters);
 
-  if (dest_lb != nullptr) {
-    if (!dest_lb->_frame_open) {
-      if (!dest_lb->_buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
-        rmlui_cat.error() << "begin_frame failed on composite destination\n";
-        return;
-      }
-      dest_lb->_frame_open = true;
-    }
-    DisplayRegionPipelineReader dr_reader(dest_lb->_dr, _thread);
-    _gsg->prepare_display_region(&dr_reader);
+  // Bind the destination (composite the source ONTO it, preserving its existing
+  // content — do not clear).  dest_lb == nullptr means composite to whatever is
+  // currently active (the main window / parent), which end_layer already
+  // restored above.
+  if (dest_lb != nullptr && !dest_lb->_frame_open) {
+    bind_target(dest_lb, /*clear=*/false);
   }
 
   CPT(RenderState) state = _shader_passthrough;
@@ -1049,6 +1301,81 @@ PopLayer() {
 // ===========================================================================
 
 /**
+ * Composites src_tex into a brand-new independent RGBA texture and returns it.
+ *
+ * A pool buffer is borrowed to render into, then given a fresh replacement
+ * texture so the buffer stays valid and reusable; the rendered texture is
+ * detached and returned.  The returned texture never aliases any live layer
+ * render target, so the caller can hold it for as long as it likes.
+ *
+ * When a scissor is active (RmlUi anchors it at the origin via FromSize for the
+ * box-shadow/CallbackTexture path), the scissor sub-rectangle of the source is
+ * scaled to fill the full 0..1 of the returned texture, matching the reference
+ * backend's scissor-cropped result.  RmlUi reports the CallbackTexture's size as
+ * the scissor size and samples it with rect/dimensions UVs (see
+ * ElementImage.cpp), so the content must fill the texture's UV range.
+ */
+PT(Texture) RmlRenderInterface::
+snapshot_texture(Texture *src_tex) {
+  if (src_tex == nullptr) return nullptr;
+
+  LayerBuffer *snap_lb = alloc_layer();
+  if (snap_lb == nullptr) return nullptr;
+
+  // If a scissor is active, sample only its (origin-anchored) sub-rectangle of
+  // the source and scale it to fill the output, so the snapshot is effectively
+  // cropped to the scissor with its content filling the texture's UV range.
+  LVecBase2f uv_offset(0.f, 0.f);
+  LVecBase2f uv_scale(1.f, 1.f);
+  if (_scissor_active && _dimensions.x > 0 && _dimensions.y > 0) {
+    const auto &r = _scissor_rect;
+    int sw = r.Right() - r.Left();
+    int sh = r.Bottom() - r.Top();
+    if (sw > 0 && sh > 0) {
+      uv_offset.set(r.Left() / (float)_dimensions.x,
+                    r.Top()  / (float)_dimensions.y);
+      uv_scale.set(sw / (float)_dimensions.x, sh / (float)_dimensions.y);
+    }
+  }
+
+  begin_layer(snap_lb);
+  CPT(RenderState) st = _shader_passthrough;
+  CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
+  sa = DCAST(ShaderAttrib, sa)->set_shader_input(
+    InternalName::make("u_blend_factor"), LVecBase4f(1.f, 0.f, 0.f, 0.f));
+  sa = DCAST(ShaderAttrib, sa)->set_shader_input(
+    InternalName::make("u_uv_offset"), uv_offset);
+  sa = DCAST(ShaderAttrib, sa)->set_shader_input(
+    InternalName::make("u_uv_scale"), uv_scale);
+  st = st->add_attrib(sa);
+  composite_quad(st, src_tex);
+  end_layer(snap_lb, nullptr);
+
+  // Detach the rendered texture and give the pool buffer a fresh replacement
+  // bound as its render target, so the buffer remains a valid, reusable pool
+  // entry (alloc_layer requires _tex != nullptr).  This avoids both the
+  // dead-pool-slot retirement and any aliasing of the live render target.
+  PT(Texture) result = snap_lb->_tex;
+
+  PT(Texture) fresh = new Texture(snap_lb->_buf->get_name());
+  int w = result->get_x_size();
+  int h = result->get_y_size();
+  fresh->setup_2d_texture(w, h, Texture::T_unsigned_byte, Texture::F_rgba);
+  fresh->set_wrap_u(SamplerState::WM_clamp);
+  fresh->set_wrap_v(SamplerState::WM_clamp);
+  fresh->set_minfilter(SamplerState::FT_linear);
+  fresh->set_magfilter(SamplerState::FT_linear);
+  snap_lb->_buf->clear_render_textures();
+  snap_lb->_buf->add_render_texture(fresh, GraphicsOutput::RTM_bind_or_copy,
+                                    GraphicsOutput::RTP_color);
+  snap_lb->_tex = fresh;
+
+  free_layer(snap_lb);
+
+  return result;
+}
+
+/**
  * Snapshots the current layer's contents into a new texture handle that the
  * caller owns.  The layer remains active for further rendering.
  */
@@ -1061,35 +1388,24 @@ SaveLayerAsTexture() {
   LayerBuffer *lb = get_layer(top._handle);
   if (!lb || !lb->_tex) return 0;
 
+  // End the layer's pass (push-aware) so its texture is complete before we
+  // sample it; snapshot_texture borrows another buffer and restores state.
   if (lb->_frame_open) {
-    lb->_buf->end_frame(GraphicsOutput::FM_render, _thread);
-    lb->_frame_open = false;
+    end_layer(lb, nullptr);
   }
 
-  LayerBuffer *snap_lb = alloc_layer();
-  if (!snap_lb) return 0;
+  PT(Texture) snap_tex = snapshot_texture(lb->_tex);
 
-  begin_layer(snap_lb);
-  CPT(RenderState) st = _shader_passthrough;
-  CPT(RenderAttrib) sa = st->get_attrib(ShaderAttrib::get_class_slot());
-  sa = DCAST(ShaderAttrib, sa)->set_shader_input(
-    InternalName::make("u_blend_factor"), LVecBase4f(1.f, 0.f, 0.f, 0.f));
-  st = st->add_attrib(sa);
-  composite_quad(st, lb->_tex);
-  end_layer(snap_lb, nullptr);
+  // Restart the layer's frame for any further rendering into it, PRESERVING its
+  // accumulated content (clear=false) — the RmlUi contract is that the layer
+  // stays active with its existing contents after a snapshot.
+  bind_target(lb, /*clear=*/false);
 
-  // Transfer ownership of the texture out of the layer buffer before pooling
-  // it.  The PT here becomes the sole strong reference; the manual ref() is
-  // the one that ReleaseTexture will drop via unref_delete.
-  PT(Texture) snap_tex = std::move(snap_lb->_tex);
+  if (snap_tex == nullptr) return 0;
+
+  // RmlUi owns the returned handle and releases it via ReleaseTexture, which
+  // calls unref_delete; balance that with a manual ref() here.
   snap_tex->ref();
-
-  // Return snap_lb to the pool with _tex cleared so the pool entry holds no
-  // lingering reference to the snapshot texture.
-  free_layer(snap_lb);
-
-  begin_layer(lb);
-
   return (Rml::TextureHandle)snap_tex.p();
 }
 
@@ -1106,16 +1422,24 @@ SaveLayerAsMaskImage() {
   if (!lb || !lb->_tex) return 0;
 
   if (lb->_frame_open) {
-    LayerBuffer *parent = (_layer_stack.size() >= 2 &&
-                           _layer_stack[_layer_stack.size() - 2]._handle != 0)
-      ? get_layer(_layer_stack[_layer_stack.size() - 2]._handle) : nullptr;
-    end_layer(lb, parent);
-    begin_layer(lb); // restart for future rendering
+    end_layer(lb, nullptr);
   }
+
+  // Snapshot into an independent texture; the live layer texture would be
+  // cleared by the begin_layer() restart below before the mask is consumed.
+  PT(Texture) mask_tex = snapshot_texture(lb->_tex);
+
+  // Restart the layer for further rendering, preserving its content (the mask is
+  // an independent snapshot, so the live layer is untouched by it).
+  bind_target(lb, /*clear=*/false);
+
+  if (mask_tex == nullptr) return 0;
 
   CompiledFilterData *fd = new CompiledFilterData;
   fd->_type     = FilterType::MASK_IMAGE;
-  fd->_mask_tex = lb->_tex;
+  // _mask_tex is a PT, so it keeps the snapshot alive; ReleaseFilter just
+  // deletes the CompiledFilterData and the PT drops the reference.  No ref().
+  fd->_mask_tex = mask_tex;
   return reinterpret_cast<Rml::CompiledFilterHandle>(fd);
 }
 

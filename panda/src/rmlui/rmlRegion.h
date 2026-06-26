@@ -19,6 +19,7 @@
 #include "rmlInputHandler.h"
 #include "rmlContext.h"
 #include "graphicsOutput.h"
+#include "callbackObject.h"
 
 #ifndef CPPPARSER
 #include "rmlRenderInterface.h"
@@ -51,6 +52,13 @@ protected:
   virtual void do_cull(CullHandler *cull_handler, SceneSetup *scene_setup,
                        GraphicsStateGuardian *gsg, Thread *current_thread);
 
+  // Performs the actual RmlUi render against the given cull handler (which must
+  // draw immediately, i.e. a DrawCullHandler with the GSG frame open).  Shared
+  // by the cull-and-draw-together path (called from do_cull) and the deferred
+  // draw-callback path (called from the draw thread with the frame open).
+  void render_now(CullHandler *cull_handler, SceneSetup *scene_setup,
+                  GraphicsStateGuardian *gsg, Thread *current_thread);
+
 PUBLISHED:
   virtual ~RmlRegion();
 
@@ -75,6 +83,18 @@ PUBLISHED:
   MAKE_PROPERTY(debugger_visible, is_debugger_visible, set_debugger_visible);
 
 private:
+  // Draw-phase callback.  In a sorted (cull/draw) threading model do_cull runs
+  // in the cull phase with no open GSG frame, so RmlUi's layer compositing
+  // (which needs an open command buffer to switch render targets) cannot run
+  // there.  Instead do_cull defers, and this callback runs render_now() during
+  // the draw phase, where the window frame is open.
+  class DrawCallback : public CallbackObject {
+  public:
+    DrawCallback(RmlRegion *region) : _region(region) {}
+    virtual void do_callback(CallbackData *cbdata);
+    RmlRegion *_region;
+  };
+
 #ifndef CPPPARSER
   RmlRenderInterface _interface;
   Rml::Context *_context = nullptr;

@@ -383,6 +383,25 @@ PUBLISHED:
 public:
   virtual void end_frame(Thread *current_thread);
 
+  // Switches the active render target to `output` within the currently-open
+  // frame, WITHOUT beginning a new frame (no nested begin_frame).  Used for
+  // render-to-texture compositing that must happen mid-frame (e.g. RmlUi layer
+  // buffers).  Returns false if the backend cannot switch targets within a
+  // frame; the caller must then fall back (or skip the offscreen pass).  Each
+  // successful push must be matched by a pop_render_target() that restores the
+  // previous render target (the framebuffer).  Backends that don't override this
+  // report unsupported.
+  //
+  // NOTE: pop restores the render target but NOT the display-region
+  // viewport/scissor.  A caller that pushes a target with a different
+  // viewport/scissor than the one it restores must re-prepare its display region
+  // after the pop.  (rmlui's layer buffers all share the window's pixel rect, so
+  // this is a no-op for it.)
+  virtual bool push_render_target(GraphicsOutput *output, DisplayRegion *dr,
+                                  bool clear);
+  virtual bool pop_render_target();
+  INLINE bool get_supports_render_target_switch() const;
+
   void set_current_properties(const FrameBufferProperties *properties);
 
   virtual bool depth_offset_decals();
@@ -615,6 +634,10 @@ protected:
 
   int _max_vertex_transforms;
   int _max_vertex_transform_indices;
+
+  // True if push_render_target()/pop_render_target() can switch the active
+  // render target within an open frame (set by backends that override them).
+  bool _supports_render_target_switch = false;
 
   bool _supports_occlusion_query;
   PT(OcclusionQueryContext) _current_occlusion_query;

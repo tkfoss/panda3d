@@ -17,10 +17,11 @@
 #include "config_rmlui.h"
 #include "referenceCount.h"
 #include "pointerTo.h"
+#include "pmap.h"
+#include "rmlDataModel.h"
 
 class RmlDocument;
 class RmlElement;
-class RmlDataModel;
 
 #ifndef CPPPARSER
 #include <RmlUi/Core/Context.h>
@@ -81,9 +82,22 @@ public:
 #ifndef CPPPARSER
   explicit RmlContext(Rml::Context *ctx) : _ctx(ctx) {}
 
+  // Invalidates and drops every cached RmlDataModel wrapper.  Called by
+  // ~RmlRegion after Rml::RemoveContext has destroyed the underlying models, so
+  // a retained Python handle's dirty_variable()/dirty_all() become safe no-ops
+  // instead of dereferencing a freed RmlUi data model.
+  void _invalidate_data_models();
+
 private:
   friend class RmlRegion;
   Rml::Context *_ctx = nullptr;
+
+  // Keeps every RmlDataModel wrapper this context vends alive for the lifetime
+  // of the context.  A bound custom data variable (bind_list) stores its
+  // VariableDefinition inside the wrapper, while RmlUi holds only a raw pointer
+  // to it; the wrapper must therefore outlive the RmlUi data model.  Cleared on
+  // remove_data_model() and when the owning RmlRegion tears the context down.
+  pmap<std::string, PT(RmlDataModel)> _data_models;
 #endif
 };
 

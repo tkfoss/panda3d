@@ -16,11 +16,10 @@
 
 #include "config_rmlui.h"
 #include "referenceCount.h"
-
 #include "callbackObject.h"
+#include "luse.h"  // LVecBase2f, used in the PUBLISHED interface (interrogate-visible)
 
 #ifndef CPPPARSER
-#include "luse.h"
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/EventListener.h>
@@ -103,7 +102,8 @@ PUBLISHED:
 public:
   RmlElement() = default;
 #ifndef CPPPARSER
-  explicit RmlElement(Rml::Element *el) : _el(el) {}
+  explicit RmlElement(Rml::Element *el)
+    : _el(el), _observer(el ? el->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>()) {}
   // _owned is not copyable; a copied wrapper is a non-owning alias of the same element.
   RmlElement(const RmlElement &other) : _el(nullptr) {}
   RmlElement &operator=(const RmlElement &) = delete;
@@ -113,7 +113,18 @@ public:
 protected:
   friend class RmlDocument;
 
+  // Returns the underlying element, or nullptr if it has been destroyed (e.g.
+  // the document was closed/unloaded or the owning region torn down).  The
+  // ObserverPtr auto-nulls when RmlUi destroys the element, so this makes the
+  // wrapper's nassert guards detect a dead element instead of dereferencing
+  // freed memory.
+  Rml::Element *element() const {
+    return _observer.get();
+  }
+
   Rml::Element *_el = nullptr;
+  // Tracks _el's liveness; expires automatically when RmlUi destroys _el.
+  Rml::ObserverPtr<Rml::Element> _observer;
   // Non-null only for freshly-created (not yet DOM-inserted) elements.
   // append_child() moves this into the DOM and clears it.
   Rml::ElementPtr _owned;

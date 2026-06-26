@@ -60,8 +60,15 @@ class RmlRenderInterface
 #endif
 {
 public:
+  ~RmlRenderInterface();
+
   // Called once by RmlRegion after the window is created.
   void init(GraphicsOutput *window);
+
+  // Releases the layer-buffer pool and scratch buffers, requesting closure of
+  // their offscreen GraphicsOutputs.  Must be called while the GraphicsEngine
+  // is still valid (i.e. from ~RmlRegion, not during late static teardown).
+  void shutdown();
 
   // Called once per frame from RmlRegion::do_cull.  trav, gsg, and
   // current_thread must remain valid for the duration of the call.
@@ -87,6 +94,14 @@ public:
   void EnableScissorRegion(bool enable) override;
   void SetScissorRegion(Rml::Rectanglei region) override;
   void SetTransform(const Rml::Matrix4f *transform) override;
+
+  // Clip mask (non-rectangular clipping: border-radius overflow, clipping under
+  // a CSS transform, inset/clipped box-shadow).  Implemented with the stencil
+  // buffer via StencilAttrib.
+  void EnableClipMask(bool enable) override;
+  void RenderToClipMask(Rml::ClipMaskOperation operation,
+                        Rml::CompiledGeometryHandle geometry,
+                        Rml::Vector2f translation) override;
 
   // -----------------------------------------------------------------------
   // Optional Rml::RenderInterface — layers / filters / shaders
@@ -121,6 +136,10 @@ public:
     PT(Texture)        _tex;
     bool               _frame_open = false;
     bool               _in_use     = false;
+    // True if this buffer was bound via the GSG's within-frame
+    // push_render_target() (Vulkan) rather than a nested begin_frame() (GL
+    // fallback).  Determines how it is unbound in end_layer().
+    bool               _used_push  = false;
   };
 
 protected:
@@ -132,6 +151,9 @@ protected:
   struct LayerEntry {
     Rml::LayerHandle _handle;  // 0 = main window; else (LayerBuffer*)+1
     Rml::Rectanglei  _scissor; // scissor rect saved at push time
+    // True if this layer's buffer failed to bind (push_render_target failed):
+    // its geometry must be suppressed rather than drawn into the parent target.
+    bool             _suppressed = false;
   };
 
   // -----------------------------------------------------------------------
@@ -186,12 +208,25 @@ protected:
   void ensure_shaders();
 
   // Layer pool management.
-  LayerBuffer *alloc_layer();
+  void         grow_pool(size_t target_size); // call only outside Render()
+  LayerBuffer *alloc_layer();                 // nullptr if pool exhausted
   void         free_layer(LayerBuffer *lb);
   LayerBuffer *get_layer(Rml::LayerHandle handle); // nullptr if handle==0
 
+  // Composites src_tex into a brand-new independent RGBA texture (via a pool
+  // buffer that is restored to a clean, reusable state afterwards) and returns
+  // it.  Used by SaveLayerAsTexture / SaveLayerAsMaskImage so the returned
+  // texture never aliases a live layer render target.  Returns nullptr on
+  // failure.  The returned PT is the sole owner; the caller decides refcounting.
+  PT(Texture) snapshot_texture(Texture *src_tex);
+
+  // Bind a layer buffer as the current render target.  clear=true starts it as
+  // transparent black; clear=false preserves its existing content (compositing).
+  // Prefers the GSG within-frame push_render_target(); falls back to begin_frame.
+  void bind_target(LayerBuffer *lb, bool clear);
+
   // Bind a layer buffer's FBO as the current render target, clearing to
-  // transparent black.  Asserts lb != nullptr.
+  // transparent black.  Asserts lb != nullptr.  (= bind_target(lb, true).)
   void begin_layer(LayerBuffer *lb);
 
   // End a layer's frame, flushing its texture.  Rebinds dest (nullptr = main
@@ -210,8 +245,14 @@ private:
   // The parent window (set by init()).
   GraphicsOutput *_window = nullptr;
 
-  // Layer buffer pool.  Pre-allocated in init(), expanded on demand.
+  // Layer buffer pool.  Pre-allocated in init(); grown only between frames
+  // (in render()) when a prior frame ran out, never mid-frame.
   pvector<LayerBuffer *> _layer_pool;
+
+  // Concurrent-use accounting, used to size pool growth between frames.
+  int  _layers_in_use      = 0;
+  int  _peak_layers_in_use = 0;
+  bool _pool_exhausted     = false;
 
   // Two scratch buffers for ping-pong compositing within apply_filters().
   LayerBuffer *_scratch[2] = { nullptr, nullptr };
@@ -222,6 +263,13 @@ private:
   // Scissor state.
   bool            _scissor_active = false;
   Rml::Rectanglei _scissor_rect;
+
+  // Clip-mask (stencil) state.  When _clip_mask_active, geometry is drawn with
+  // a stencil test that passes only where stencil == _clip_mask_ref.  Intersect
+  // raises the reference value so successive masks compound.
+  bool         _clip_mask_active = false;
+  unsigned int _clip_mask_ref    = 1;
+  bool         _warned_no_stencil = false;  // one-shot base-layer stencil warning
 
   // CSS transform: set by SetTransform(); nullptr = identity.
   CPT(TransformState) _css_transform;

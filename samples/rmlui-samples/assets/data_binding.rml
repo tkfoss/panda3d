@@ -16,9 +16,9 @@
 
         div#window {
             decorator: none;
-            background-color: rgba(12, 18, 32, 0.97);
+            background-color: rgba(12, 18, 32, 247);
             border-width: 1dp;
-            border-color: rgba(80, 120, 220, 0.35);
+            border-color: rgba(80, 120, 220, 89);
             border-radius: 6dp;
         }
 

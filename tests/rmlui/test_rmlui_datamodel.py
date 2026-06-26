@@ -73,6 +73,46 @@ def test_bind_list_for_data_for(rml_context):
     assert "<span>d</span>" in out.get_inner_rml()
 
 
+def test_bind_dict_list_per_field(rml_context):
+    dm = rml_context.create_data_model("m")
+    rows = [
+        {"name": "alice", "score": 100, "visible": True},
+        {"name": "bob", "score": 50, "visible": True},
+        {"name": "carol", "score": 0, "visible": False},
+    ]
+    assert dm.bind_dict_list("rows", lambda: rows)
+
+    doc = load(rml_context,
+               "<div id='out' data-model='m'>"
+               "<p data-for='r : rows' data-if='r.visible'>{{r.name}}={{r.score}}</p>"
+               "</div>")
+    out = doc.get_element_by_id("out")
+    rml = out.get_inner_rml()
+    # Per-field access resolves r.name / r.score.
+    assert "alice=100" in rml
+    assert "bob=50" in rml
+    # data-if hides the carol row (RmlUi sets display:none rather than removing it).
+    assert "display: none" in rml
+
+    # Mutate the backing list + dirty -> new row appears.
+    rows.append({"name": "dave", "score": 75, "visible": True})
+    dm.dirty_variable("rows")
+    rml_context.update()
+    assert "dave=75" in out.get_inner_rml()
+
+
+def test_bind_dict_list_rejects_non_dict_rows(rml_context):
+    dm = rml_context.create_data_model("m")
+    # Rows that aren't dicts are logged and produce empty rows, not a crash.
+    assert dm.bind_dict_list("rows", lambda: ["not-a-dict", 42])
+
+    doc = load(rml_context,
+               "<div id='out' data-model='m'>"
+               "<p data-for='r : rows'>{{r.name}}</p></div>")
+    # No field values render, but the context did not crash.
+    assert doc.get_element_by_id("out") is not None
+
+
 def test_bind_list_rejects_non_sequence(rml_context):
     dm = rml_context.create_data_model("m")
     assert dm.bind_list("items", lambda: 42)  # bind succeeds

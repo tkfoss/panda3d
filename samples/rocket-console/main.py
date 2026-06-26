@@ -5,10 +5,10 @@ import os
 import sys
 from panda3d.core import loadPrcFileData, Vec4, Mat4
 from panda3d.core import DirectionalLight, AmbientLight, PointLight
-from panda3d.core import Texture, PNMImage
+from panda3d.core import Texture
 from panda3d.core import PandaSystem
 import random
-from direct.interval.LerpInterval import LerpHprInterval, LerpPosInterval, LerpFunc
+from direct.interval.LerpInterval import LerpFunc
 from direct.showbase.ShowBase import ShowBase
 
 from panda3d.rmlui import RmlRegion, RmlInputHandler
@@ -83,7 +83,6 @@ class MyApp(ShowBase):
         self.userConfirmed = False
 
         self.windowRmlRegion = RmlRegion.make('pandaRml', self.win)
-        self.windowRmlRegion.setActive(1)
 
         self.windowRmlRegion.set_input_handler(self.inputHandler)
 
@@ -114,7 +113,7 @@ class MyApp(ShowBase):
     def cycleLoading(self, task):
         """
         Update the "loading" text in the initial window until
-        the user presses Space, Enter, or Escape or clicks (see loading.rxml)
+        the user presses Space, Enter, or Escape or clicks (see loading.rml)
         or sufficient time has elapsed (self.stopLoadingTime).
         """
         text = self.loadingText
@@ -129,7 +128,7 @@ class MyApp(ShowBase):
             text.set_inner_rml("Assets not found")
         else:
             count = 5
-            intv = int(now * 4) % count  # @UndefinedVariable
+            intv = int(now * 4) % count
             text.set_inner_rml("Loading" + ("." * (1+intv)) + (" " * (2 - intv)))
 
         return task.cont

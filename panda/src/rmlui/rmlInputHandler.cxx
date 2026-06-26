@@ -159,10 +159,24 @@ do_transmit_data(DataGraphTraverser *, const DataNodeTransmit &input,
     const EventStoreVec2 *pixel_xy;
     DCAST_INTO_V(pixel_xy, input.get_data(_pixel_xy_input).get_ptr());
     LVecBase2 p = pixel_xy->get_value();
-    if (p != _mouse_xy) {
+    bool reentered = !_mouse_in_window;
+    if (p != _mouse_xy || reentered) {
+      // Force a move on re-entry even at the same pixel, so RmlUi re-activates
+      // the mouse and rebuilds the hover chain that the leave cleared.
       _mouse_xy_changed = true;
       _mouse_xy = p;
     }
+    // A pending leave is stale once the pointer is back inside; drop it so the
+    // move above isn't immediately undone in the same flush.
+    if (reentered) {
+      _mouse_left = false;
+    }
+    _mouse_in_window = true;
+  } else if (_mouse_in_window) {
+    // The pointer left the window/region this tick: pixel_xy is no longer
+    // transmitted.  Queue a single mouse-leave so RmlUi clears hover state.
+    _mouse_in_window = false;
+    _mouse_left = true;
   }
 
   if (input.has_data(_button_events_input)) {
@@ -296,6 +310,13 @@ update_context(Rml::Context *context, int xoffs, int yoffs) {
   if (_wheel_delta != 0.0f) {
     context->ProcessMouseWheel(_wheel_delta, _modifiers);
     _wheel_delta = 0.0f;
+  }
+
+  if (_mouse_left) {
+    _mouse_left = false;
+    // Clears hover/active styling on all elements; RmlUi re-activates the mouse
+    // on the next ProcessMouseMove when the pointer returns.
+    context->ProcessMouseLeave();
   }
 
   context->Update();

@@ -2840,6 +2840,26 @@ end_frame(Thread *current_thread) {
 }
 
 /**
+ * Switches the active render target to the given output within the currently
+ * open frame, without beginning a new frame.  The base implementation reports
+ * unsupported; backends that can rebind a target mid-frame override this.  See
+ * the header for the contract.
+ */
+bool GraphicsStateGuardian::
+push_render_target(GraphicsOutput *, DisplayRegion *, bool) {
+  return false;
+}
+
+/**
+ * Restores the render target saved by the matching push_render_target().  The
+ * base implementation reports unsupported.
+ */
+bool GraphicsStateGuardian::
+pop_render_target() {
+  return false;
+}
+
+/**
  * Returns true if this GSG can implement decals using a DepthOffsetAttrib, or
  * false if that is unreliable and the three-step rendering process should be
  * used instead.

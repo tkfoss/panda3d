@@ -50,6 +50,11 @@ PUBLISHED:
   // Call dirty_variable(name) after mutating the list to trigger DOM refresh.
   bool bind_list(const std::string &name, PyObject *getter);
 
+  // Bind a list-of-records variable for data-for with per-field access.
+  // getter() must return a Python list of dicts (field name -> scalar).  In RML,
+  // data-for="row : name" then {{ row.field }} / data-if="row.field" etc.
+  bool bind_dict_list(const std::string &name, PyObject *getter);
+
   bool bind_event_callback(const std::string &name, PyObject *callback);
 #endif  // HAVE_PYTHON
 
@@ -62,7 +67,16 @@ public:
                         Rml::DataModelConstructor constructor)
     : _valid(true), _handle(handle), _constructor(constructor) {}
 
+  // Called by RmlContext when the underlying model is removed, so a retained
+  // wrapper stops touching the now-destroyed RmlUi model.  Drops the custom
+  // definitions (RmlUi no longer references them) and the Python callables.
+  void _invalidate() {
+    _valid = false;
+    _custom_definitions.clear();
+  }
+
 private:
+  friend class RmlContext;
   bool _valid = false;
   Rml::DataModelHandle _handle;
   Rml::DataModelConstructor _constructor;

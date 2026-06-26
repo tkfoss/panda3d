@@ -663,6 +663,18 @@ get_supports_occlusion_query() const {
 }
 
 /**
+ * Returns true if push_render_target()/pop_render_target() can switch the active
+ * render target within an open frame (no nested begin_frame).  When true, a
+ * caller doing mid-frame render-to-texture must use those instead of nesting
+ * begin_frame(); when false, the backend does not support it and the caller
+ * should fall back (e.g. nest begin_frame, as GL allows).
+ */
+INLINE bool GraphicsStateGuardian::
+get_supports_render_target_switch() const {
+  return _supports_render_target_switch;
+}
+
+/**
  * Returns true if this GSG supports a timer query.
  */
 bool GraphicsStateGuardian::

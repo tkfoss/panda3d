@@ -20,8 +20,8 @@
  */
 void RmlDocument::
 show() {
-  nassertv(_doc != nullptr);
-  _doc->Show();
+  if (get_raw() == nullptr) return;
+  get_raw()->Show();
 }
 
 /**
@@ -29,8 +29,8 @@ show() {
  */
 void RmlDocument::
 hide() {
-  nassertv(_doc != nullptr);
-  _doc->Hide();
+  if (get_raw() == nullptr) return;
+  get_raw()->Hide();
 }
 
 /**
@@ -40,14 +40,15 @@ hide() {
  */
 void RmlDocument::
 close() {
-  if (_doc == nullptr) {
+  if (get_raw() == nullptr) {
     return;
   }
   // NOTE: Any RmlElement wrappers obtained from this document become invalid
   // after the next RmlContext::update() call.  Do not use stored RmlElement
   // references after calling close().
-  _doc->Close();
+  get_raw()->Close();
   _doc = nullptr;
+  _observer.reset();
 }
 
 /**
@@ -55,8 +56,8 @@ close() {
  */
 PT(RmlElement) RmlDocument::
 get_element_by_id(const std::string &id) {
-  nassertr(_doc != nullptr, nullptr);
-  Rml::Element *el = _doc->GetElementById(id);
+  if (get_raw() == nullptr) return nullptr;
+  Rml::Element *el = get_raw()->GetElementById(id);
   if (el == nullptr) {
     return nullptr;
   }
@@ -68,8 +69,8 @@ get_element_by_id(const std::string &id) {
  */
 std::string RmlDocument::
 get_title() const {
-  nassertr(_doc != nullptr, std::string());
-  return _doc->GetTitle();
+  if (get_raw() == nullptr) return std::string();
+  return get_raw()->GetTitle();
 }
 
 /**
@@ -77,8 +78,8 @@ get_title() const {
  */
 void RmlDocument::
 set_title(const std::string &title) {
-  nassertv(_doc != nullptr);
-  _doc->SetTitle(title);
+  if (get_raw() == nullptr) return;
+  get_raw()->SetTitle(title);
 }
 
 /**
@@ -87,8 +88,8 @@ set_title(const std::string &title) {
  */
 std::string RmlDocument::
 get_source_url() const {
-  nassertr(_doc != nullptr, std::string());
-  return _doc->GetSourceURL();
+  if (get_raw() == nullptr) return std::string();
+  return get_raw()->GetSourceURL();
 }
 
 /**
@@ -96,8 +97,8 @@ get_source_url() const {
  */
 bool RmlDocument::
 is_modal() const {
-  nassertr(_doc != nullptr, false);
-  return _doc->IsModal();
+  if (get_raw() == nullptr) return false;
+  return get_raw()->IsModal();
 }
 
 /**
@@ -105,8 +106,8 @@ is_modal() const {
  */
 void RmlDocument::
 pull_to_front() {
-  nassertv(_doc != nullptr);
-  _doc->PullToFront();
+  if (get_raw() == nullptr) return;
+  get_raw()->PullToFront();
 }
 
 /**
@@ -114,8 +115,8 @@ pull_to_front() {
  */
 void RmlDocument::
 push_to_back() {
-  nassertv(_doc != nullptr);
-  _doc->PushToBack();
+  if (get_raw() == nullptr) return;
+  get_raw()->PushToBack();
 }
 
 /**
@@ -123,8 +124,8 @@ push_to_back() {
  */
 void RmlDocument::
 reload_style_sheet() {
-  nassertv(_doc != nullptr);
-  _doc->ReloadStyleSheet();
+  if (get_raw() == nullptr) return;
+  get_raw()->ReloadStyleSheet();
 }
 
 /**
@@ -133,8 +134,8 @@ reload_style_sheet() {
  */
 PT(RmlElement) RmlDocument::
 create_element(const std::string &tag) {
-  nassertr(_doc != nullptr, nullptr);
-  Rml::ElementPtr ptr = _doc->CreateElement(tag);
+  if (get_raw() == nullptr) return nullptr;
+  Rml::ElementPtr ptr = get_raw()->CreateElement(tag);
   if (!ptr) {
     return nullptr;
   }
@@ -150,8 +151,8 @@ create_element(const std::string &tag) {
  */
 PT(RmlElement) RmlDocument::
 create_text_node(const std::string &text) {
-  nassertr(_doc != nullptr, nullptr);
-  Rml::ElementPtr ptr = _doc->CreateTextNode(text);
+  if (get_raw() == nullptr) return nullptr;
+  Rml::ElementPtr ptr = get_raw()->CreateTextNode(text);
   if (!ptr) {
     return nullptr;
   }

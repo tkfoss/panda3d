@@ -1,18 +1,19 @@
 """
 Panda3D RmlUi — Feature Showcase
 =================================
-Eight-tab reference for the CSS / RmlUi feature set:
+Nine-tab reference for the CSS / RmlUi feature set:
 
   Welcome      — source guide
-  Font & Text  — font-effect: glow, outline, shadow, blur; emoji; sizes
+  Font & Text  — font-effect: glow, outline, shadow, blur; sizes
   Animations   — @keyframes cube, transition: :hover, easing gallery
   Decorators   — gradients, tiled-box, spritesheet, image-color, fit modes
   Transforms   — translate, rotate, scale, skew, 3D perspective
-  Filters      — filter: blur, grayscale, sepia, brightness, …
   Forms        — all input types; submit wired to Python callback
-  Live/Python  — per-frame DOM updates via set_inner_rml / set_attribute
+  Filters      — filter: blur, grayscale, sepia, brightness, …
+  Live / Python — per-frame DOM updates via set_inner_rml / set_property
   DOM API      — geometry, traversal, create/append, context queries, scroll
-  Data Binding — see 03_data_binding.py for DataModel / bind_func usage
+
+(Data binding / DataModel / bind_func is demonstrated in 03_data_binding.py.)
 
 Controls
 --------

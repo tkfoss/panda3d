@@ -63,10 +63,17 @@ PUBLISHED:
 public:
   RmlDocument() = default;
 #ifndef CPPPARSER
-  explicit RmlDocument(Rml::ElementDocument *doc) : _doc(doc) {}
-  Rml::ElementDocument *get_raw() const { return _doc; }
+  explicit RmlDocument(Rml::ElementDocument *doc)
+    : _doc(doc),
+      _observer(doc ? doc->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>()) {}
+  // Returns the live document, or nullptr if it has been destroyed (closed,
+  // unloaded, or the owning region torn down) — the ObserverPtr auto-nulls when
+  // RmlUi destroys the document, so callers never dereference freed memory.
+  Rml::ElementDocument *get_raw() const { return _observer ? _doc : nullptr; }
 private:
   Rml::ElementDocument *_doc = nullptr;
+  // Tracks _doc's liveness; expires automatically when RmlUi destroys it.
+  Rml::ObserverPtr<Rml::Element> _observer;
 #endif
 };
 

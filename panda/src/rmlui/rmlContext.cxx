@@ -25,7 +25,7 @@
  */
 PT(RmlDocument) RmlContext::
 load_document(const std::string &path) {
-  nassertr(_ctx != nullptr, nullptr);
+  if (_ctx == nullptr) return nullptr;
   Rml::ElementDocument *doc = _ctx->LoadDocument(path);
   if (doc == nullptr) {
     return nullptr;
@@ -39,7 +39,7 @@ load_document(const std::string &path) {
  */
 bool RmlContext::
 load_font_face(const std::string &path, bool fallback) {
-  nassertr(_ctx != nullptr, false);
+  if (_ctx == nullptr) return false;
   return Rml::LoadFontFace(path, fallback);
 }
 
@@ -50,7 +50,7 @@ load_font_face(const std::string &path, bool fallback) {
  */
 void RmlContext::
 update() {
-  nassertv(_ctx != nullptr);
+  if (_ctx == nullptr) return;
   _ctx->Update();
 }
 
@@ -59,7 +59,7 @@ update() {
  */
 int RmlContext::
 get_width() const {
-  nassertr(_ctx != nullptr, 0);
+  if (_ctx == nullptr) return 0;
   return _ctx->GetDimensions().x;
 }
 
@@ -68,7 +68,7 @@ get_width() const {
  */
 int RmlContext::
 get_height() const {
-  nassertr(_ctx != nullptr, 0);
+  if (_ctx == nullptr) return 0;
   return _ctx->GetDimensions().y;
 }
 
@@ -77,7 +77,7 @@ get_height() const {
  */
 std::string RmlContext::
 get_name() const {
-  nassertr(_ctx != nullptr, std::string());
+  if (_ctx == nullptr) return std::string();
   return _ctx->GetName();
 }
 
@@ -90,13 +90,17 @@ get_name() const {
  */
 PT(RmlDataModel) RmlContext::
 create_data_model(const std::string &name) {
-  nassertr(_ctx != nullptr, nullptr);
+  if (_ctx == nullptr) return nullptr;
   Rml::DataModelConstructor constructor = _ctx->CreateDataModel(name);
   if (!constructor) {
     return nullptr;
   }
   Rml::DataModelHandle handle = constructor.GetModelHandle();
-  return new RmlDataModel(handle, constructor);
+  PT(RmlDataModel) model = new RmlDataModel(handle, constructor);
+  // Retain the wrapper for the context's lifetime: bind_list stores its
+  // VariableDefinition inside the wrapper while RmlUi keeps only a raw pointer.
+  _data_models[name] = model;
+  return model;
 }
 
 /**
@@ -106,13 +110,35 @@ create_data_model(const std::string &name) {
  */
 PT(RmlDataModel) RmlContext::
 get_data_model(const std::string &name) {
-  nassertr(_ctx != nullptr, nullptr);
+  if (_ctx == nullptr) return nullptr;
+  // Return the cached wrapper if we vended one, so that bindings made through
+  // it (and the VariableDefinitions they own) stay alive and a caller that
+  // re-fetches the model sees the same handle.
+  auto it = _data_models.find(name);
+  if (it != _data_models.end()) {
+    return it->second;
+  }
   Rml::DataModelConstructor constructor = _ctx->GetDataModel(name);
   if (!constructor) {
     return nullptr;
   }
   Rml::DataModelHandle handle = constructor.GetModelHandle();
-  return new RmlDataModel(handle, constructor);
+  PT(RmlDataModel) model = new RmlDataModel(handle, constructor);
+  _data_models[name] = model;
+  return model;
+}
+
+/**
+ * Invalidates and drops every cached RmlDataModel wrapper.  See the header.
+ */
+void RmlContext::
+_invalidate_data_models() {
+  for (auto &entry : _data_models) {
+    if (entry.second != nullptr) {
+      entry.second->_invalidate();
+    }
+  }
+  _data_models.clear();
 }
 
 /**
@@ -124,8 +150,18 @@ get_data_model(const std::string &name) {
  */
 bool RmlContext::
 remove_data_model(const std::string &name) {
-  nassertr(_ctx != nullptr, false);
-  return _ctx->RemoveDataModel(name);
+  if (_ctx == nullptr) return false;
+  bool removed = _ctx->RemoveDataModel(name);
+  if (removed) {
+    // Invalidate and drop the cached wrapper: the RmlUi model and its bindings
+    // are gone, so any retained RmlDataModel handle must stop being used.
+    auto it = _data_models.find(name);
+    if (it != _data_models.end()) {
+      it->second->_invalidate();
+      _data_models.erase(it);
+    }
+  }
+  return removed;
 }
 
 /**
@@ -134,7 +170,7 @@ remove_data_model(const std::string &name) {
  */
 bool RmlContext::
 is_mouse_interacting() const {
-  nassertr(_ctx != nullptr, false);
+  if (_ctx == nullptr) return false;
   return _ctx->IsMouseInteracting();
 }
 
@@ -145,7 +181,7 @@ is_mouse_interacting() const {
  */
 PT(RmlElement) RmlContext::
 get_element_at_point(float x, float y) const {
-  nassertr(_ctx != nullptr, nullptr);
+  if (_ctx == nullptr) return nullptr;
   Rml::Element *el = _ctx->GetElementAtPoint({x, y});
   return el ? new RmlElement(el) : nullptr;
 }
@@ -157,7 +193,7 @@ get_element_at_point(float x, float y) const {
  */
 PT(RmlElement) RmlContext::
 get_hover_element() const {
-  nassertr(_ctx != nullptr, nullptr);
+  if (_ctx == nullptr) return nullptr;
   Rml::Element *el = _ctx->GetHoverElement();
   return el ? new RmlElement(el) : nullptr;
 }
@@ -169,7 +205,7 @@ get_hover_element() const {
  */
 PT(RmlElement) RmlContext::
 get_focus_element() const {
-  nassertr(_ctx != nullptr, nullptr);
+  if (_ctx == nullptr) return nullptr;
   Rml::Element *el = _ctx->GetFocusElement();
   return el ? new RmlElement(el) : nullptr;
 }
@@ -180,7 +216,7 @@ get_focus_element() const {
  */
 PT(RmlDocument) RmlContext::
 load_document_from_memory(const std::string &rml, const std::string &source_url) {
-  nassertr(_ctx != nullptr, nullptr);
+  if (_ctx == nullptr) return nullptr;
   Rml::ElementDocument *doc = _ctx->LoadDocumentFromMemory(
       rml, source_url.empty() ? "[from memory]" : source_url);
   return doc ? new RmlDocument(doc) : nullptr;
@@ -191,8 +227,10 @@ load_document_from_memory(const std::string &rml, const std::string &source_url)
  */
 void RmlContext::
 unload_document(RmlDocument *doc) {
-  nassertv(_ctx != nullptr && doc != nullptr);
-  _ctx->UnloadDocument(doc->get_raw());
+  if (_ctx == nullptr || doc == nullptr) return;
+  Rml::ElementDocument *raw = doc->get_raw();
+  if (raw == nullptr) return;  // already destroyed
+  _ctx->UnloadDocument(raw);
 }
 
 /**
@@ -200,7 +238,7 @@ unload_document(RmlDocument *doc) {
  */
 void RmlContext::
 unload_all_documents() {
-  nassertv(_ctx != nullptr);
+  if (_ctx == nullptr) return;
   _ctx->UnloadAllDocuments();
 }
 
@@ -209,7 +247,7 @@ unload_all_documents() {
  */
 int RmlContext::
 get_num_documents() const {
-  nassertr(_ctx != nullptr, 0);
+  if (_ctx == nullptr) return 0;
   return _ctx->GetNumDocuments();
 }
 
@@ -218,7 +256,7 @@ get_num_documents() const {
  */
 void RmlContext::
 set_density_independent_pixel_ratio(float ratio) {
-  nassertv(_ctx != nullptr);
+  if (_ctx == nullptr) return;
   _ctx->SetDensityIndependentPixelRatio(ratio);
 }
 
@@ -227,6 +265,6 @@ set_density_independent_pixel_ratio(float ratio) {
  */
 void RmlContext::
 enable_mouse_cursor(bool enable) {
-  nassertv(_ctx != nullptr);
+  if (_ctx == nullptr) return;
   _ctx->EnableMouseCursor(enable);
 }

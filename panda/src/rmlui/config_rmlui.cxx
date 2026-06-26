@@ -46,6 +46,14 @@ ConfigVariableDouble rmlui_text_gamma
           "closer to native macOS / Windows font smoothing.  Set to 1.0 to "
           "disable."));
 
+ConfigVariableInt rmlui_layer_pool_size
+("rmlui-layer-pool-size", 8,
+ PRC_DESC("Number of offscreen layer buffers pre-allocated per RmlUi context "
+          "for the render-to-texture layer stack (box-shadow, backdrop-filter, "
+          "masks, nested filters).  The pool grows automatically between frames "
+          "if exceeded; raise this to avoid a one-frame dropped effect the first "
+          "time a frame needs more than the default."));
+
 ConfigureFn(config_rmlui) {
   init_librmlui();
 }

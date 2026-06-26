@@ -34,6 +34,7 @@ is_valid() const {
  */
 void RmlDataModel::
 dirty_variable(const std::string &name) {
+  nassertv(_valid);
   _handle.DirtyVariable(name);
 }
 
@@ -43,6 +44,7 @@ dirty_variable(const std::string &name) {
  */
 void RmlDataModel::
 dirty_all() {
+  nassertv(_valid);
   _handle.DirtyAllVariables();
 }
 
@@ -50,6 +52,7 @@ dirty_all() {
 #include "rmlPythonUtil.h"
 #include <memory>
 #include <vector>
+#include <map>
 #include <RmlUi/Core/DataVariable.h>
 
 /**
@@ -68,7 +71,7 @@ dirty_all() {
  */
 bool RmlDataModel::
 bind_func(const std::string &name, PyObject *getter, PyObject *setter) {
-  if (!_constructor) {
+  if (!_valid || !_constructor) {
     return false;
   }
 
@@ -195,6 +198,106 @@ struct PythonListDefinition final : public Rml::VariableDefinition {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Array-of-dicts (struct rows) for data-for="row : rows" with row.field access.
+//
+// PythonDictListDefinition is the Array; each element is a Struct whose fields
+// come from the row's Python dict.  The getter returns a list of dicts; Size()
+// caches each row as an ordered field->Variant map.  Child(index) hands back a
+// Struct DataVariable pointing at that row map; the struct's Child(name) returns
+// a Scalar pointing directly at the cached field variant (stable until the next
+// Size() rebuild).
+// ---------------------------------------------------------------------------
+// One cached row: field name -> Variant.  RmlUi addresses fields by name, so a
+// plain ordered map is fine.
+using RowMap = std::map<std::string, Rml::Variant>;
+
+struct PythonRowStructDefinition final : public Rml::VariableDefinition {
+  VariantScalarDefinition _scalar;
+  PythonRowStructDefinition() : VariableDefinition(Rml::DataVariableType::Struct) {}
+
+  Rml::DataVariable Child(void *ptr, const Rml::DataAddressEntry &addr) override {
+    auto *row = static_cast<RowMap *>(ptr);
+    auto it = row->find(addr.name);
+    if (it == row->end()) {
+      rmlui_cat.warning() << "bind_dict_list row has no field '"
+                          << addr.name << "'\n";
+      return Rml::DataVariable();
+    }
+    return Rml::DataVariable(&_scalar, &it->second);
+  }
+};
+
+struct PythonDictListDefinition final : public Rml::VariableDefinition {
+  std::shared_ptr<PyObject>     _getter;
+  PythonRowStructDefinition     _row_def;
+  std::vector<RowMap> _cache;
+  Rml::Variant                  _size_variant;
+
+  explicit PythonDictListDefinition(std::shared_ptr<PyObject> getter)
+    : VariableDefinition(Rml::DataVariableType::Array)
+    , _getter(std::move(getter)) {}
+
+  int Size(void *) override {
+    _cache.clear();
+
+    PyGILState_STATE gs = PyGILState_Ensure();
+    PyObject *list = PyObject_CallNoArgs(_getter.get());
+    if (!list) {
+      PyErr_Print();
+      PyGILState_Release(gs);
+      return 0;
+    }
+    if (!PyList_Check(list) && !PyTuple_Check(list)) {
+      rmlui_cat.error() << "bind_dict_list getter must return a list or tuple\n";
+      Py_DECREF(list);
+      PyGILState_Release(gs);
+      return 0;
+    }
+
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(list);
+    _cache.reserve(n);
+    PyObject **items = PySequence_Fast_ITEMS(list);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+      RowMap row;
+      PyObject *d = items[i];
+      if (PyDict_Check(d)) {
+        PyObject *key, *value;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(d, &pos, &key, &value)) {
+          const char *k = PyUnicode_Check(key)
+            ? PyUnicode_AsUTF8(key) : nullptr;
+          if (k != nullptr) {
+            Rml::Variant v;
+            rml_python_to_variant(value, v);
+            row.emplace(std::string(k), std::move(v));
+          }
+        }
+      } else {
+        rmlui_cat.error() << "bind_dict_list getter must return a list of dicts\n";
+      }
+      _cache.push_back(std::move(row));
+    }
+
+    Py_DECREF(list);
+    PyGILState_Release(gs);
+    return (int)_cache.size();
+  }
+
+  Rml::DataVariable Child(void *, const Rml::DataAddressEntry &addr) override {
+    const int index = addr.index;
+    if (index < 0 || index >= (int)_cache.size()) {
+      if (addr.name == "size") {
+        _size_variant = (int)_cache.size();
+        return Rml::DataVariable(&_row_def._scalar, &_size_variant);
+      }
+      rmlui_cat.warning() << "bind_dict_list index " << index << " out of range\n";
+      return Rml::DataVariable();
+    }
+    return Rml::DataVariable(&_row_def, &_cache[index]);
+  }
+};
+
 } // anonymous namespace
 
 /**
@@ -208,7 +311,7 @@ struct PythonListDefinition final : public Rml::VariableDefinition {
  */
 bool RmlDataModel::
 bind_list(const std::string &name, PyObject *getter) {
-  if (!_constructor) {
+  if (!_valid || !_constructor) {
     return false;
   }
 
@@ -229,6 +332,37 @@ bind_list(const std::string &name, PyObject *getter) {
 }
 
 /**
+ * Binds a named list-of-records variable for data-for with per-field access.
+ *
+ * getter() must return a Python list (or tuple) of dicts; each dict maps a field
+ * name (str) to a scalar (bool/int/float/str).  In RML, iterate with
+ * data-for="row : name" and read fields as {{ row.field }} (and data-if /
+ * data-class / data-style on row.field).  After mutating the data, call
+ * dirty_variable(name).
+ *
+ * Returns True on success, False if the constructor is invalid.
+ */
+bool RmlDataModel::
+bind_dict_list(const std::string &name, PyObject *getter) {
+  if (!_valid || !_constructor) {
+    return false;
+  }
+
+  Py_XINCREF(getter);
+  std::shared_ptr<PyObject> getter_ref(getter, rml_py_decref_with_gil);
+
+  auto owned = std::make_unique<PythonDictListDefinition>(std::move(getter_ref));
+  auto *def = owned.get();
+  _custom_definitions.push_back(std::move(owned));
+
+  if (!_constructor.BindCustomDataVariable(name, Rml::DataVariable(def, nullptr))) {
+    _custom_definitions.pop_back();
+    return false;
+  }
+  return true;
+}
+
+/**
  * Binds a named event callback to a Python callable.
  *
  * callback()  — called with no arguments when the data-event fires.
@@ -237,7 +371,7 @@ bind_list(const std::string &name, PyObject *getter) {
  */
 bool RmlDataModel::
 bind_event_callback(const std::string &name, PyObject *callback) {
-  if (!_constructor) {
+  if (!_valid || !_constructor) {
     return false;
   }
 

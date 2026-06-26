@@ -23,8 +23,9 @@
  */
 std::string RmlElement::
 get_id() const {
-  nassertr(_el != nullptr, std::string());
-  return _el->GetId();
+  Rml::Element *e = element();
+  if (e == nullptr) return std::string();
+  return e->GetId();
 }
 
 /**
@@ -32,8 +33,8 @@ get_id() const {
  */
 void RmlElement::
 set_inner_rml(const std::string &rml) {
-  nassertv(_el != nullptr);
-  _el->SetInnerRML(rml);
+  if (element() == nullptr) return;
+  element()->SetInnerRML(rml);
 }
 
 /**
@@ -41,8 +42,8 @@ set_inner_rml(const std::string &rml) {
  */
 std::string RmlElement::
 get_inner_rml() const {
-  nassertr(_el != nullptr, std::string());
-  return _el->GetInnerRML();
+  if (element() == nullptr) return std::string();
+  return element()->GetInnerRML();
 }
 
 /**
@@ -50,8 +51,8 @@ get_inner_rml() const {
  */
 void RmlElement::
 set_attribute(const std::string &name, const std::string &value) {
-  nassertv(_el != nullptr);
-  _el->SetAttribute(name, value);
+  if (element() == nullptr) return;
+  element()->SetAttribute(name, value);
 }
 
 /**
@@ -60,8 +61,8 @@ set_attribute(const std::string &name, const std::string &value) {
  */
 std::string RmlElement::
 get_attribute(const std::string &name, const std::string &default_value) const {
-  nassertr(_el != nullptr, default_value);
-  return _el->GetAttribute<Rml::String>(name, default_value);
+  if (element() == nullptr) return default_value;
+  return element()->GetAttribute<Rml::String>(name, default_value);
 }
 
 /**
@@ -69,8 +70,8 @@ get_attribute(const std::string &name, const std::string &default_value) const {
  */
 void RmlElement::
 set_class(const std::string &class_name, bool activate) {
-  nassertv(_el != nullptr);
-  _el->SetClass(class_name, activate);
+  if (element() == nullptr) return;
+  element()->SetClass(class_name, activate);
 }
 
 /**
@@ -78,8 +79,8 @@ set_class(const std::string &class_name, bool activate) {
  */
 bool RmlElement::
 is_class_set(const std::string &class_name) const {
-  nassertr(_el != nullptr, false);
-  return _el->IsClassSet(class_name);
+  if (element() == nullptr) return false;
+  return element()->IsClassSet(class_name);
 }
 
 /**
@@ -87,8 +88,8 @@ is_class_set(const std::string &class_name) const {
  */
 void RmlElement::
 click() {
-  nassertv(_el != nullptr);
-  _el->Click();
+  if (element() == nullptr) return;
+  element()->Click();
 }
 
 /**
@@ -96,8 +97,8 @@ click() {
  */
 void RmlElement::
 focus() {
-  nassertv(_el != nullptr);
-  _el->Focus();
+  if (element() == nullptr) return;
+  element()->Focus();
 }
 
 /**
@@ -106,9 +107,9 @@ focus() {
  */
 std::string RmlElement::
 get_value() const {
-  nassertr(_el != nullptr, std::string());
+  if (element() == nullptr) return std::string();
   Rml::ElementFormControl *fc =
-    rmlui_dynamic_cast<Rml::ElementFormControl *>(_el);
+    rmlui_dynamic_cast<Rml::ElementFormControl *>(element());
   return fc ? fc->GetValue() : std::string();
 }
 
@@ -118,9 +119,9 @@ get_value() const {
  */
 void RmlElement::
 set_value(const std::string &value) {
-  nassertv(_el != nullptr);
+  if (element() == nullptr) return;
   Rml::ElementFormControl *fc =
-    rmlui_dynamic_cast<Rml::ElementFormControl *>(_el);
+    rmlui_dynamic_cast<Rml::ElementFormControl *>(element());
   if (fc) fc->SetValue(value);
 }
 
@@ -129,8 +130,8 @@ set_value(const std::string &value) {
  */
 LVecBase2f RmlElement::
 get_relative_offset() const {
-  nassertr(_el != nullptr, LVecBase2f(0, 0));
-  Rml::Vector2f v = _el->GetRelativeOffset();
+  if (element() == nullptr) return LVecBase2f(0, 0);
+  Rml::Vector2f v = element()->GetRelativeOffset();
   return LVecBase2f(v.x, v.y);
 }
 
@@ -139,8 +140,8 @@ get_relative_offset() const {
  */
 LVecBase2f RmlElement::
 get_absolute_offset() const {
-  nassertr(_el != nullptr, LVecBase2f(0, 0));
-  Rml::Vector2f v = _el->GetAbsoluteOffset();
+  if (element() == nullptr) return LVecBase2f(0, 0);
+  Rml::Vector2f v = element()->GetAbsoluteOffset();
   return LVecBase2f(v.x, v.y);
 }
 
@@ -149,8 +150,8 @@ get_absolute_offset() const {
  */
 float RmlElement::
 get_offset_width() const {
-  nassertr(_el != nullptr, 0.0f);
-  return _el->GetOffsetWidth();
+  if (element() == nullptr) return 0.0f;
+  return element()->GetOffsetWidth();
 }
 
 /**
@@ -158,8 +159,8 @@ get_offset_width() const {
  */
 float RmlElement::
 get_offset_height() const {
-  nassertr(_el != nullptr, 0.0f);
-  return _el->GetOffsetHeight();
+  if (element() == nullptr) return 0.0f;
+  return element()->GetOffsetHeight();
 }
 
 /**
@@ -167,8 +168,8 @@ get_offset_height() const {
  */
 bool RmlElement::
 has_attribute(const std::string &name) const {
-  nassertr(_el != nullptr, false);
-  return _el->HasAttribute(name);
+  if (element() == nullptr) return false;
+  return element()->HasAttribute(name);
 }
 
 /**
@@ -176,8 +177,8 @@ has_attribute(const std::string &name) const {
  */
 void RmlElement::
 remove_attribute(const std::string &name) {
-  nassertv(_el != nullptr);
-  _el->RemoveAttribute(name);
+  if (element() == nullptr) return;
+  element()->RemoveAttribute(name);
 }
 
 /**
@@ -185,8 +186,8 @@ remove_attribute(const std::string &name) {
  */
 bool RmlElement::
 set_property(const std::string &name, const std::string &value) {
-  nassertr(_el != nullptr, false);
-  return _el->SetProperty(name, value);
+  if (element() == nullptr) return false;
+  return element()->SetProperty(name, value);
 }
 
 /**
@@ -194,8 +195,8 @@ set_property(const std::string &name, const std::string &value) {
  */
 void RmlElement::
 remove_property(const std::string &name) {
-  nassertv(_el != nullptr);
-  _el->RemoveProperty(name);
+  if (element() == nullptr) return;
+  element()->RemoveProperty(name);
 }
 
 /**
@@ -203,8 +204,8 @@ remove_property(const std::string &name) {
  */
 bool RmlElement::
 is_pseudo_class_set(const std::string &pseudo_class) const {
-  nassertr(_el != nullptr, false);
-  return _el->IsPseudoClassSet(pseudo_class);
+  if (element() == nullptr) return false;
+  return element()->IsPseudoClassSet(pseudo_class);
 }
 
 /**
@@ -213,8 +214,8 @@ is_pseudo_class_set(const std::string &pseudo_class) const {
  */
 void RmlElement::
 scroll_into_view(bool align_with_top) {
-  nassertv(_el != nullptr);
-  _el->ScrollIntoView(align_with_top);
+  if (element() == nullptr) return;
+  element()->ScrollIntoView(align_with_top);
 }
 
 /**
@@ -222,8 +223,8 @@ scroll_into_view(bool align_with_top) {
  */
 PT(RmlElement) RmlElement::
 query_selector(const std::string &selector) {
-  nassertr(_el != nullptr, nullptr);
-  Rml::Element *result = _el->QuerySelector(selector);
+  if (element() == nullptr) return nullptr;
+  Rml::Element *result = element()->QuerySelector(selector);
   return result ? new RmlElement(result) : nullptr;
 }
 
@@ -232,8 +233,8 @@ query_selector(const std::string &selector) {
  */
 PT(RmlElement) RmlElement::
 get_parent_node() const {
-  nassertr(_el != nullptr, nullptr);
-  Rml::Element *p = _el->GetParentNode();
+  if (element() == nullptr) return nullptr;
+  Rml::Element *p = element()->GetParentNode();
   return p ? new RmlElement(p) : nullptr;
 }
 
@@ -242,8 +243,8 @@ get_parent_node() const {
  */
 PT(RmlElement) RmlElement::
 get_child(int index) const {
-  nassertr(_el != nullptr, nullptr);
-  Rml::Element *c = _el->GetChild(index);
+  if (element() == nullptr) return nullptr;
+  Rml::Element *c = element()->GetChild(index);
   return c ? new RmlElement(c) : nullptr;
 }
 
@@ -252,8 +253,8 @@ get_child(int index) const {
  */
 int RmlElement::
 get_num_children() const {
-  nassertr(_el != nullptr, 0);
-  return _el->GetNumChildren();
+  if (element() == nullptr) return 0;
+  return element()->GetNumChildren();
 }
 
 /**
@@ -264,10 +265,10 @@ get_num_children() const {
  */
 PT(RmlElement) RmlElement::
 append_child(RmlElement *child) {
-  nassertr(_el != nullptr, nullptr);
-  nassertr(child != nullptr && child->_el != nullptr, nullptr);
+  if (element() == nullptr) return nullptr;
+  nassertr(child != nullptr && child->element() != nullptr, nullptr);
   nassertr(child->_owned != nullptr, nullptr);
-  Rml::Element *appended = _el->AppendChild(std::move(child->_owned));
+  Rml::Element *appended = element()->AppendChild(std::move(child->_owned));
   child->_owned = nullptr;
   return appended ? new RmlElement(appended) : nullptr;
 }
@@ -278,12 +279,13 @@ append_child(RmlElement *child) {
  */
 void RmlElement::
 remove_child(RmlElement *child) {
-  nassertv(_el != nullptr);
-  nassertv(child != nullptr && child->_el != nullptr);
+  if (element() == nullptr) return;
+  nassertv(child != nullptr && child->element() != nullptr);
   // RmlUi fires OnDetach on any attached listeners as the element is destroyed,
   // which deletes them; we do not track listeners on the wrapper.
-  _el->RemoveChild(child->_el);
+  element()->RemoveChild(child->element());
   child->_el = nullptr;
+  child->_observer.reset();
 }
 
 /**
@@ -293,14 +295,14 @@ remove_child(RmlElement *child) {
  */
 void RmlElement::
 add_event_listener(const std::string &dom_event, CallbackObject *callback) {
-  nassertv(_el != nullptr);
+  if (element() == nullptr) return;
   nassertv(callback != nullptr);
 
   // RmlUi takes a non-owning EventListener pointer and calls OnDetach (which
   // deletes the listener) when the element is destroyed.  The listener holds a
   // strong reference to the callback.
   RmlEventListener *listener = new RmlEventListener(callback);
-  _el->AddEventListener(dom_event, listener);
+  element()->AddEventListener(dom_event, listener);
 }
 
 /**

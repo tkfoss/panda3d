@@ -106,7 +106,7 @@ class BenchmarkSample(ShowBase):
         keep   = self._boxes[:-BATCH]
         remove = self._boxes[-BATCH:]
         markup = "".join(
-            f'<div class="box{"  lit" if bid in self._lit else ""}" id="{html.escape(bid)}">'
+            f'<div class="box{" lit" if bid in self._lit else ""}" id="{html.escape(bid)}">'
             f'{int(bid.split("-")[1]) % 100}</div>'
             for bid, _ in keep
         )

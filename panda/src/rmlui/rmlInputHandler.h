@@ -49,6 +49,11 @@ private:
 
   LVecBase2 _mouse_xy;
   bool _mouse_xy_changed = false;
+  // Tracks whether the pointer is currently inside the window/region.  When it
+  // leaves (pixel_xy stops being transmitted), we queue a single mouse-leave so
+  // RmlUi clears hover/active state instead of leaving it latched.
+  bool _mouse_in_window = false;
+  bool _mouse_left = false;
   int _modifiers = 0;
   float _wheel_delta = 0.0f;
 

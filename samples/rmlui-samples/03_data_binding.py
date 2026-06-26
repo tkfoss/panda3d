@@ -6,7 +6,8 @@ Demonstrates RmlUi DataModel binding from Python.
   Basics tab    — data-model "basics" with {{ }} templates, data-if, driven by
                   Python callables via ctx.create_data_model() + bind_func().
                   dirty_variable() triggers DOM re-evaluation.
-  Events tab    — range slider polled each frame; mouse-click position from ev dict
+  Events tab    — range slider polled each frame; mouse-click position from the
+                  RmlEvent (ev.mouse_x / ev.mouse_y)
   data-for tab  — bind_list() registers a Python list; data-for renders each item.
                   Add/Remove/Shuffle buttons mutate the list and call dirty_variable().
                   Also shows the static expandable tree via set_class("expanded", …).
