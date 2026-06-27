@@ -899,6 +899,12 @@ if (COMPILER=="GCC"):
     SmartPkgEnable("VRPN",      "",          ("vrpn", "quat"), ("vrpn", "quat.h", "vrpn/vrpn_Types.h"))
     SmartPkgEnable("OPUS",      "opusfile",  ("opusfile", "opus", "ogg"), ("ogg/ogg.h", "opus/opusfile.h", "opus"))
     SmartPkgEnable("JPEG",      "",          ("jpeg"), "jpeglib.h")
+    # glslang >= ~11 merges MachineIndependent/GenericCodeGen/OSDependent into a
+    # single libglslang (Homebrew/apt/vcpkg all ship the merged layout now), so
+    # requiring those component libs fails to locate a modern system glslang.
+    # Keep only the libs that exist in BOTH layouts as required, and list the
+    # merged-in components as optional_libs so an old split-layout glslang still
+    # links every component while a new merged one links via libglslang alone.
     SmartPkgEnable("GLSLANG",   "",          ("glslang", "SPIRV", "glslang-default-resource-limits"), "glslang/Public/ShaderLang.h", optional_libs=("MachineIndependent", "GenericCodeGen", "OSDependent", "OGLCompiler", "HLSL"))
     SmartPkgEnable("SPIRV-TOOLS", "",        ("SPIRV-Tools-opt", "SPIRV-Tools"), "spirv-tools/optimizer.hpp")
     SmartPkgEnable("SPIRV-CROSS-GLSL", "",   ("spirv-cross-core", "spirv-cross-glsl"), "spirv_cross/spirv_cross.hpp", thirdparty_dir="spirv-cross")
@@ -3274,8 +3280,12 @@ if GetTarget() == 'windows' and "VISUALSTUDIO" in SDK:
         CopyFile(GetOutputDir() + "/bin/", os.path.join(dir, "vcruntime" + vcver + ".dll"))
 
 # Copy over the MoltenVK library (the ICD; discovered at runtime via VK_ICD_FILENAMES).
+# os.path.realpath() resolves a symlinked source first: a Homebrew `molten-vk` install
+# ships lib/libMoltenVK.dylib as a SYMLINK into the Cellar, and CopyFile() preserves
+# symlinks, so without realpath the copied link's relative target is broken from inside
+# built/lib and the install_name_tool below fails ("can't open file")
 if GetTarget() == 'darwin' and not PkgSkip("VULKAN") and "VULKAN" in SDK:
-    dylib = os.path.join(SDK["VULKAN"], "lib", "libMoltenVK.dylib")
+    dylib = os.path.realpath(os.path.join(SDK["VULKAN"], "lib", "libMoltenVK.dylib"))
     target = os.path.join(GetOutputDir(), "lib", "libMoltenVK.dylib")
     if NeedsBuild([target], [dylib]):
         CopyFile(target, dylib)
