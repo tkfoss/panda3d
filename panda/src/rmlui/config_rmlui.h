@@ -19,7 +19,7 @@
 #include "configVariableDouble.h"
 #include "configVariableInt.h"
 
-NotifyCategoryDecl(rmlui, EXPCL_PANDARMUI, EXPTP_PANDARMUI);
+NotifyCategoryDecl(rmlui, EXPCL_PANDARMLUI, EXPTP_PANDARMLUI);
 
 // Stem-darkening exponent applied to the alpha coverage of generated font
 // glyph atlases.  1.0 leaves FreeType's anti-aliasing unchanged; values > 1.0
@@ -34,6 +34,6 @@ extern ConfigVariableDouble rmlui_text_gamma;
 // dropped effect on the first frame that exceeds the pool.  Default 8.
 extern ConfigVariableInt rmlui_layer_pool_size;
 
-extern EXPCL_PANDARMUI void init_librmlui();
+extern EXPCL_PANDARMLUI void init_librmlui();
 
 #endif

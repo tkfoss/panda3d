@@ -55,17 +55,26 @@ def test_unload_single_document(rml_context):
     assert rml_context.get_num_documents() == 1
 
 
-def test_get_element_at_point_misses_empty_space(rml_context):
-    load(rml_context, "<div id='d' style='width:10px;height:10px;'></div>")
-    # A point far outside the small element resolves to the document body, not
-    # our div; mostly we are asserting it does not crash and returns a wrapper.
-    el = rml_context.get_element_at_point(5, 5)
-    # May be the div or an ancestor depending on layout; just ensure no crash.
-    assert el is None or el.get_id() is not None
+def test_get_element_at_point_hits_and_misses(rml_context):
+    # A block element pinned to the top-left corner with a known size.
+    load(
+        rml_context,
+        "<div id='d' style='position:absolute;left:0;top:0;"
+        "width:40px;height:40px;'></div>",
+    )
+    rml_context.update()
+
+    # A point inside the div resolves to it...
+    hit = rml_context.get_element_at_point(20, 20)
+    assert hit is not None
+    assert hit.get_id() == "d"
+
+    # ...and a point well outside it does not.
+    miss = rml_context.get_element_at_point(500, 500)
+    assert miss is None or miss.get_id() != "d"
 
 
-def test_hover_and_focus_default_none(rml_context):
+def test_hover_default_none(rml_context):
     load(rml_context, "<p>a</p>")
-    # With no mouse interaction the hover element is the document or None.
-    hover = rml_context.get_hover_element()
-    assert hover is None or hover.get_id() is not None
+    # With no mouse interaction no element is hovered.
+    assert rml_context.get_hover_element() is None

@@ -31,7 +31,7 @@
  *
  * Obtained via RmlDocument::get_element_by_id().
  */
-class EXPCL_PANDARMUI RmlElement : public ReferenceCount {
+class EXPCL_PANDARMLUI RmlElement : public ReferenceCount {
 PUBLISHED:
   std::string get_id() const;
   void set_inner_rml(const std::string &rml);
@@ -104,8 +104,12 @@ public:
 #ifndef CPPPARSER
   explicit RmlElement(Rml::Element *el)
     : _el(el), _observer(el ? el->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>()) {}
-  // _owned is not copyable; a copied wrapper is a non-owning alias of the same element.
-  RmlElement(const RmlElement &other) : _el(nullptr) {}
+  // A copy is a non-owning alias of the same element: it shares _el and the
+  // liveness observer, but never _owned (Rml::ElementPtr is move-only and DOM
+  // ownership cannot be shared, so the copy never owns the element).  The
+  // interrogate-generated Python bindings require a callable copy constructor.
+  RmlElement(const RmlElement &other)
+    : _el(other._el), _observer(other._observer) {}
   RmlElement &operator=(const RmlElement &) = delete;
 
   ~RmlElement();

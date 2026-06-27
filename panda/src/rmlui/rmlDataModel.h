@@ -33,7 +33,7 @@
  * Use dirty_variable() / dirty_all() to notify RmlUi that Python-side
  * data has changed so the DOM re-evaluates data-value / data-if / data-for.
  */
-class EXPCL_PANDARMUI RmlDataModel : public ReferenceCount {
+class EXPCL_PANDARMLUI RmlDataModel : public ReferenceCount {
 PUBLISHED:
   bool is_valid() const;
 

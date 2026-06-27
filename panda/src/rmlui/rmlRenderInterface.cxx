@@ -586,34 +586,16 @@ get_layer(Rml::LayerHandle handle) {
 /**
  * Binds lb's FBO as the current render target and clears to transparent black.
  *
- * Prefers the GSG's within-frame push_render_target() (no nested begin_frame),
- * which is the only correct path on backends like Vulkan that allow one open
- * frame at a time.  Falls back to nesting begin_frame() on backends (GL) that
- * report push_render_target unsupported.
+ * Implemented by nesting a begin_frame() on the layer buffer, which GL allows
+ * within an already-open window frame.  (Backends that permit only one open
+ * frame at a time would need a within-frame render-target switch instead; no
+ * such backend is supported here.)
  */
 void RmlRenderInterface::
 bind_target(LayerBuffer *lb, bool clear) {
   nassertv(lb != nullptr && _gsg != nullptr && _thread != nullptr);
   if (lb->_frame_open) return;
 
-  // On backends that can switch the render target within an open frame (Vulkan),
-  // ALWAYS use push_render_target — never nest begin_frame (which would assert
-  // with a frame already open).  A push failure there is a transient error: skip
-  // this layer (the effect degrades) rather than crash.
-  if (_gsg->get_supports_render_target_switch()) {
-    if (_gsg->push_render_target(lb->_buf, lb->_dr, clear)) {
-      lb->_used_push  = true;
-      lb->_frame_open = true;
-      DisplayRegionPipelineReader dr_reader(lb->_dr, _thread);
-      _gsg->prepare_display_region(&dr_reader);
-    } else {
-      rmlui_cat.warning() << "push_render_target failed; skipping layer\n";
-    }
-    return;
-  }
-
-  // Fallback (GL and other backends that allow a nested begin_frame).
-  lb->_used_push = false;
   if (!lb->_buf->begin_frame(GraphicsOutput::FM_render, _thread)) {
     rmlui_cat.error() << "begin_frame failed on layer buffer\n";
     return;
@@ -639,30 +621,6 @@ begin_layer(LayerBuffer *lb) {
  */
 void RmlRenderInterface::
 end_layer(LayerBuffer *lb, LayerBuffer *dest) {
-  // The unbind path is chosen by the BACKEND capability, not by per-buffer flags:
-  // on a render-target-switch backend (Vulkan) a frame is already open and a
-  // nested begin_frame would assert, so we must never take the GL fallback there
-  // — even when lb's push failed (lb->_frame_open == false), in which case the
-  // target was never switched and there is nothing to unbind.
-  if (_gsg != nullptr && _gsg->get_supports_render_target_switch()) {
-    if (lb != nullptr && lb->_frame_open) {
-      // pop_render_target() restores the target active before lb's push (the
-      // parent layer or the window) — the stack handles the rebind.
-      _gsg->pop_render_target();
-      lb->_frame_open = false;
-      lb->_used_push  = false;
-    }
-    // Make dest active if requested and not already (e.g. CompositeLayers dest).
-    if (dest != nullptr && !dest->_frame_open) {
-      bind_target(dest, /*clear=*/false);
-    } else if (dest != nullptr) {
-      DisplayRegionPipelineReader dr_reader(dest->_dr, _thread);
-      _gsg->prepare_display_region(&dr_reader);
-    }
-    return;
-  }
-
-  // Fallback (GL and other backends that allow a nested begin_frame).
   if (lb != nullptr && lb->_frame_open) {
     lb->_buf->end_frame(GraphicsOutput::FM_render, _thread);
     lb->_frame_open = false;
@@ -937,9 +895,16 @@ LoadTexture(Rml::Vector2i &texture_dimensions, const Rml::String &source) {
   LoaderOptions opts;
   opts.set_auto_texture_scale(ATS_none);
 
-  PT(Texture) tex = TexturePool::load_texture(
+  PT(Texture) pooled = TexturePool::load_texture(
     Filename::from_os_specific(source), 0, false, opts);
-  if (!tex) { texture_dimensions = {0, 0}; return 0; }
+  if (!pooled) { texture_dimensions = {0, 0}; return 0; }
+
+  // TexturePool::load_texture returns a cached instance shared with the rest of
+  // the application (and with any later LoadTexture of the same source).  We
+  // mutate the RAM image in place below (Y-flip + premultiply), so work on a
+  // private copy; mutating the pooled texture would corrupt the shared image and
+  // double-premultiply on a repeat load.
+  PT(Texture) tex = pooled->make_copy();
 
   // Flip Y in RAM so UV (0,0) maps to the image top-left (CSS convention).
   // make_geom passes tex_coords verbatim; this keeps image and shader
@@ -1219,7 +1184,7 @@ PushLayer() {
   LayerEntry entry;
   entry._handle  = handle;
   entry._scissor = _scissor_rect;
-  // If the layer's buffer did not bind (push_render_target failed), suppress its
+  // If the layer's buffer did not bind (begin_frame failed), suppress its
   // geometry so it isn't drawn into the still-active parent target.
   entry._suppressed = !lb->_frame_open;
   _layer_stack.push_back(entry);

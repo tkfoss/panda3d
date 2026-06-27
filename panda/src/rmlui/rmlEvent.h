@@ -34,7 +34,7 @@ namespace Rml {
  * store an RmlEvent (or anything returned by its element accessors) past the
  * return of the callback.
  */
-class EXPCL_PANDARMUI RmlEvent : public CallbackData {
+class EXPCL_PANDARMLUI RmlEvent : public CallbackData {
 PUBLISHED:
   // The DOM event type, e.g. "click", "mousemove", "submit".
   // (Named get_event_type to avoid clashing with TypedObject::get_type.)

@@ -70,8 +70,9 @@ rml_variant_to_python(const Rml::Variant &v) {
 
 /**
  * Converts a Python object into an Rml::Variant.  Supports None, bool, int,
- * float, and str; other types leave out unchanged.  Note that Python ints are
- * narrowed to int.  The caller must hold the GIL.
+ * float, and str; other types leave out unchanged.  A Python int that does not
+ * fit in 64 bits falls back to a double (and is thus approximate).  The caller
+ * must hold the GIL.
  */
 static inline void
 rml_python_to_variant(PyObject *obj, Rml::Variant &out) {
@@ -80,7 +81,16 @@ rml_python_to_variant(PyObject *obj, Rml::Variant &out) {
   } else if (PyBool_Check(obj)) {
     out = (obj == Py_True);
   } else if (PyLong_Check(obj)) {
-    out = (int)PyLong_AsLong(obj);
+    // Use the full 64-bit range (Rml::Variant supports int64) and handle
+    // out-of-range values explicitly so no OverflowError is left set on the
+    // interpreter for the next Python call to trip over.
+    int overflow = 0;
+    long long ll = PyLong_AsLongLongAndOverflow(obj, &overflow);
+    if (overflow != 0) {
+      out = (double)PyLong_AsDouble(obj);
+    } else {
+      out = (int64_t)ll;
+    }
   } else if (PyFloat_Check(obj)) {
     out = (double)PyFloat_AsDouble(obj);
   } else if (PyUnicode_Check(obj)) {

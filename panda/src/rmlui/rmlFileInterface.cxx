@@ -100,6 +100,10 @@ Seek(Rml::FileHandle file, long offset, int origin) {
   if (handle == nullptr) {
     return false;
   }
+  // A prior Read() to end-of-file leaves eofbit (and failbit) set; seekg()
+  // clears eofbit but not failbit, so clear the stream first or the seek is a
+  // no-op that reports failure.  (RmlUi commonly reads to EOF then seeks back.)
+  handle->_stream->clear();
   switch (origin) {
   case SEEK_SET:
     handle->_stream->seekg(offset, std::ios::beg);
@@ -123,7 +127,10 @@ Tell(Rml::FileHandle file) {
   if (handle == nullptr) {
     return 0;
   }
-  return handle->_stream->tellg();
+  // tellg() returns -1 on failure; report that as 0 rather than letting it wrap
+  // to SIZE_MAX.
+  std::streampos pos = handle->_stream->tellg();
+  return pos < 0 ? 0 : (size_t)pos;
 }
 
 /**
@@ -135,5 +142,6 @@ Length(Rml::FileHandle file) {
   if (handle == nullptr) {
     return 0;
   }
-  return handle->_file->get_file_size(handle->_stream);
+  std::streamsize size = handle->_file->get_file_size(handle->_stream);
+  return size < 0 ? 0 : (size_t)size;
 }

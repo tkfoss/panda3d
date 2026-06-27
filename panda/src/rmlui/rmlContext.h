@@ -34,7 +34,7 @@ class RmlElement;
  * this object holds a non-owning pointer.  Do not use after the owning
  * RmlRegion has been destroyed.
  */
-class EXPCL_PANDARMUI RmlContext : public ReferenceCount {
+class EXPCL_PANDARMLUI RmlContext : public ReferenceCount {
 PUBLISHED:
   PT(RmlDocument) load_document(const std::string &path);
   bool load_font_face(const std::string &path, bool fallback = false);

@@ -44,7 +44,7 @@ namespace Rml {
  *   mouseWatcher.attach_new_node(handler)
  *   region.set_input_handler(handler)
  */
-class EXPCL_PANDARMUI RmlRegion : public DisplayRegion {
+class EXPCL_PANDARMLUI RmlRegion : public DisplayRegion {
 protected:
   RmlRegion(GraphicsOutput *window, const LVecBase4 &dimensions,
             const std::string &context_name);

@@ -33,7 +33,7 @@ set(P3RMLUI_SOURCES
 
 composite_sources(p3rmlui P3RMLUI_SOURCES)
 add_library(p3rmlui ${P3RMLUI_SOURCES} ${P3RMLUI_HEADERS})
-set_target_properties(p3rmlui PROPERTIES DEFINE_SYMBOL BUILDING_PANDARMUI)
+set_target_properties(p3rmlui PROPERTIES DEFINE_SYMBOL BUILDING_PANDARMLUI)
 target_link_libraries(p3rmlui panda RmlUi::RmlUi)
 if(HAVE_PYTHON)
   target_include_directories(p3rmlui PRIVATE "${PROJECT_SOURCE_DIR}/dtool/src/interrogatedb")

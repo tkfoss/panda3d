@@ -4288,7 +4288,7 @@ if not PkgSkip("VISION"):
 #
 
 if not PkgSkip("RMLUI"):
-    OPTS=['DIR:panda/src/rmlui', 'BUILDING:PANDARMUI', 'RMLUI']
+    OPTS=['DIR:panda/src/rmlui', 'BUILDING:PANDARMLUI', 'RMLUI']
     TargetAdd('p3rmlui_composite1.obj', opts=OPTS, input='p3rmlui_composite1.cxx')
 
     TargetAdd('libp3rmlui.dll', input='p3rmlui_composite1.obj')

@@ -136,10 +136,6 @@ public:
     PT(Texture)        _tex;
     bool               _frame_open = false;
     bool               _in_use     = false;
-    // True if this buffer was bound via the GSG's within-frame
-    // push_render_target() (Vulkan) rather than a nested begin_frame() (GL
-    // fallback).  Determines how it is unbound in end_layer().
-    bool               _used_push  = false;
   };
 
 protected:
@@ -151,8 +147,8 @@ protected:
   struct LayerEntry {
     Rml::LayerHandle _handle;  // 0 = main window; else (LayerBuffer*)+1
     Rml::Rectanglei  _scissor; // scissor rect saved at push time
-    // True if this layer's buffer failed to bind (push_render_target failed):
-    // its geometry must be suppressed rather than drawn into the parent target.
+    // True if this layer's buffer failed to bind (begin_frame failed): its
+    // geometry must be suppressed rather than drawn into the parent target.
     bool             _suppressed = false;
   };
 
@@ -222,7 +218,8 @@ protected:
 
   // Bind a layer buffer as the current render target.  clear=true starts it as
   // transparent black; clear=false preserves its existing content (compositing).
-  // Prefers the GSG within-frame push_render_target(); falls back to begin_frame.
+  // Implemented by nesting begin_frame() on the buffer (GL allows this within an
+  // open window frame).
   void bind_target(LayerBuffer *lb, bool clear);
 
   // Bind a layer buffer's FBO as the current render target, clearing to

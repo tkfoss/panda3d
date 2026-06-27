@@ -26,7 +26,7 @@ namespace Rml {
  * DataNode that listens for keyboard and mouse events and passes them to
  * RmlUi.  Attach to the scene graph below mouseWatcher.
  */
-class EXPCL_PANDARMUI RmlInputHandler : public DataNode {
+class EXPCL_PANDARMLUI RmlInputHandler : public DataNode {
 PUBLISHED:
   RmlInputHandler(const std::string &name = std::string());
   virtual ~RmlInputHandler();

@@ -30,7 +30,7 @@ class RmlElement;
  * Obtained via RmlContext::load_document().  The document is owned by
  * RmlUi; this wrapper holds a non-owning pointer.
  */
-class EXPCL_PANDARMUI RmlDocument : public ReferenceCount {
+class EXPCL_PANDARMLUI RmlDocument : public ReferenceCount {
 PUBLISHED:
   void show();
   void hide();

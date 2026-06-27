@@ -31,8 +31,8 @@
 #include "pandaSystem.h"
 #include "dconfig.h"
 
-#if !defined(CPPPARSER) && !defined(LINK_ALL_STATIC) && !defined(BUILDING_PANDARMUI)
-  #error Buildsystem error: BUILDING_PANDARMUI not defined
+#if !defined(CPPPARSER) && !defined(LINK_ALL_STATIC) && !defined(BUILDING_PANDARMLUI)
+  #error Buildsystem error: BUILDING_PANDARMLUI not defined
 #endif
 
 Configure(config_rmlui);
