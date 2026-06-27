@@ -19,6 +19,8 @@
 #include "shaderCompiler.h"
 #include "shaderModuleSpirV.h"
 
+class VirtualFile;
+
 /**
  * ShaderCompiler implementation that uses the libglslang library to compile
  * GLSL shaders to SPIR-V.
@@ -40,7 +42,8 @@ private:
   static bool preprocess_glsl(vector_uchar &code, int &glsl_version,
                               const Filename &source_filename,
                               pset<Filename> &once_files,
-                              BamCacheRecord *record = nullptr);
+                              BamCacheRecord *record = nullptr,
+                              pvector<PT(VirtualFile)> *source_files = nullptr);
   static bool postprocess_glsl(ShaderModuleSpirV::InstructionStream &stream,
                                int version);
   static bool postprocess_cg(ShaderModuleSpirV::InstructionStream &stream);

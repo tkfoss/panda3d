@@ -323,13 +323,19 @@ compile_now(ShaderModule::Stage stage, std::istream &in,
   bool is_cg = false;
   int glsl_version = 110;
 
+  // Files pulled in via #pragma include during preprocessing; recorded on the
+  // resulting module below so that check_source_modified() (and hence shader
+  // reloading) can see edits to included files, not just the top-level file.
+  pvector<PT(VirtualFile)> included_source_files;
+
   // Look for a special //Cg header.  Otherwise, it's a GLSL shader.
   if (check_cg_header(code)) {
     is_cg = true;
   }
   else {
     pset<Filename> once_files;
-    if (!preprocess_glsl(code, glsl_version, fullpath, once_files, record)) {
+    if (!preprocess_glsl(code, glsl_version, fullpath, once_files, record,
+                         &included_source_files)) {
       return nullptr;
     }
   }
@@ -584,7 +590,24 @@ compile_now(ShaderModule::Stage stage, std::istream &in,
   }
 
   PT(ShaderModuleSpirV) module = new ShaderModuleSpirV(stage, std::move(optimized), options);
+  // Record source-file dependencies so check_source_modified() can detect edits.
+  // Files reached via glslang's native #include come through the includer; files
+  // reached via our own #pragma include expansion come through preprocess_glsl
+  // (see included_source_files) -- without the latter, modules built from
+  // #pragma-include shaders had no recorded dependencies and never reloaded.
   for (const PT(VirtualFile) &vf : includer._source_files) {
+    module->add_source_file(vf);
+  }
+  // The top-level source file itself (only loaded-from-disk shaders have a path;
+  // shaders created from an in-memory string do not, and need no dependency).
+  if (!fullpath.empty()) {
+    VirtualFileSystem *vfs = VirtualFileSystem::get_global_ptr();
+    PT(VirtualFile) top = vfs->get_file(fullpath);
+    if (top != nullptr) {
+      module->add_source_file(top);
+    }
+  }
+  for (const PT(VirtualFile) &vf : included_source_files) {
     module->add_source_file(vf);
   }
   return module;
@@ -614,7 +637,8 @@ check_cg_header(const vector_uchar &code) {
  */
 bool ShaderCompilerGlslang::
 preprocess_glsl(vector_uchar &code, int &glsl_version, const Filename &source_filename,
-                pset<Filename> &once_files, BamCacheRecord *record) {
+                pset<Filename> &once_files, BamCacheRecord *record,
+                pvector<PT(VirtualFile)> *source_files) {
   // Make sure it ends with a newline.  This makes parsing easier.
   if (!code.empty() && code.back() != (unsigned char)'\n') {
     code.push_back((unsigned char)'\n');
@@ -768,6 +792,22 @@ preprocess_glsl(vector_uchar &code, int &glsl_version, const Filename &source_fi
             continue;
           }
 
+          // Record this file as a source dependency, so that the resulting
+          // module's check_source_modified() can detect later edits to it.
+          // Because we expand #pragma include ourselves (glslang never sees the
+          // directive), the files would otherwise be invisible to the cache, and
+          // a shader that only changed via an included file would never reload.
+          if (source_files != nullptr) {
+            source_files->push_back(vf);
+          }
+          // Also register with the BamCacheRecord, so the on-disk shader-module
+          // cache (.smo) invalidates when an included file changes.  Without this,
+          // the cache's dependents_unchanged() check only sees the top-level file
+          // and serves a stale compiled module even though an include changed.
+          if (record != nullptr) {
+            record->add_dependent_file(vf);
+          }
+
           vector_uchar inc_code;
           if (!vf->read_file(inc_code, true)) {
             shader_cat.error(false)
@@ -777,7 +817,7 @@ preprocess_glsl(vector_uchar &code, int &glsl_version, const Filename &source_fi
           }
 
           int nested_glsl_version = 0;
-          if (!preprocess_glsl(inc_code, nested_glsl_version, full_fn, once_files, record)) {
+          if (!preprocess_glsl(inc_code, nested_glsl_version, full_fn, once_files, record, source_files)) {
             return false;
           }
           if (nested_glsl_version != 0) {

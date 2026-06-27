@@ -943,6 +943,21 @@ fillin(DatagramIterator &scan, BamReader *manager) {
   _source_filename = scan.get_string();
   _used_caps = (int)scan.get_uint64();
 
+  // Source-file dependencies (bam 6.47+).  ShaderModuleSpirV does not chain to
+  // ShaderModule::fillin (it inlines the base fields here), so this must be kept
+  // in sync with ShaderModule::write_datagram, which writes this block.
+  if (manager->get_file_minor_ver() >= 47) {
+    uint32_t num_source_files = scan.get_uint32();
+    _source_files.reserve(num_source_files);
+    for (uint32_t i = 0; i < num_source_files; ++i) {
+      SourceFile sf;
+      sf._pathname = scan.get_string();
+      sf._timestamp = (time_t)scan.get_int64();
+      sf._size = (std::streamsize)scan.get_int64();
+      _source_files.push_back(std::move(sf));
+    }
+  }
+
   uint32_t num_inputs = scan.get_uint32();
   _inputs.resize(num_inputs);
   for (uint32_t i = 0; i < num_inputs; ++i) {
