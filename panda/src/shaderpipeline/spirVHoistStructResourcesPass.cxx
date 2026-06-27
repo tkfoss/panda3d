@@ -178,6 +178,14 @@ transform_definition_op(Instruction op) {
       // pointee type id straight from the database instead -- the definition is
       // retained even after delete_id().  We still need it to look up the
       // hoisted members below, and to delete this variable.
+      //
+      // (The sibling SpirVFlattenStructPass guards the same situation by testing
+      // is_deleted() on the pointer type before touching the variable; this pass
+      // needs the deleted struct's pointee type to find its hoisted replacement,
+      // so it reads through the deleted definition rather than skipping it.  A
+      // uniform struct whose members are all opaque resources -- e.g. a material
+      // descriptor { sampler2D albedo, normal, roughness, specular; } -- is what
+      // empties the struct and triggers this; see repro/repro_hoist_all_resource_struct.py.)
       const Definition &ptr_def = _db.get_definition(op.args[0]);
       if (!ptr_def.is_pointer_type()) {
         error_expected(op.args[0], "a pointer type");

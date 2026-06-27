@@ -67,11 +67,6 @@ clear(Thread *current_thread) {
  * return true if the frame should be rendered, or false if it should be
  * skipped.
  */
-// Defined (non-static) in vulkanGraphicsStateGuardian.cxx, later in this
-// composite translation unit.  Logs which named output is rendering so the
-// faulting submit in TMO_SUBMIT_TRACE can be mapped to a buffer.
-void tmo_submit_trace(const char *fmt, ...);
-
 bool VulkanGraphicsBuffer::
 begin_frame(FrameMode mode, Thread *current_thread) {
   begin_frame_spam(mode);
@@ -82,10 +77,6 @@ begin_frame(FrameMode mode, Thread *current_thread) {
   if (mode != FM_render) {
     return true;
   }
-
-  tmo_submit_trace("  BEGIN-BUFFER name=%s size=%dx%d flags=0x%x",
-                   get_name().c_str(), _size[0], _size[1],
-                   (unsigned)_creation_flags);
 
   VulkanGraphicsStateGuardian *vkgsg;
   DCAST_INTO_R(vkgsg, _gsg, false);
@@ -376,17 +367,23 @@ create_attachment(RenderTexturePlane plane, VkFormat format, Texture *texture) {
     texture->set_component_type(tex_component_type);
     texture->set_render_to_texture(true);
 
-    // Make the bound texture match this framebuffer's current size BEFORE the
-    // needs_recreation() check.  On a resize the framebuffer's _size changes but
-    // the RenderTarget only calls GraphicsBuffer::set_size() (not the texture's
-    // size), so needs_recreation() (which compares tex x/y to tc->_extent) would
-    // see the OLD size, skip release()+create_texture(), and leave tc->_extent +
-    // the cached image view addressing the PREVIOUS image -> the new VkImage and
-    // the sampled view mismatch -> garbage (the RP "red/black until you resize"
-    // bug; a 2nd resize finally lands a matching view).  Forcing the size here
-    // makes a size change always trigger a full image+view rebuild.
-    texture->set_x_size(extent.width);
-    texture->set_y_size(extent.height);
+    // Size the bound texture to this framebuffer's exact extent BEFORE the
+    // needs_recreation() check.  This backend supports non-power-of-two
+    // textures, so a render target is sized exactly to the framebuffer (no
+    // power-of-two padding) -- otherwise add_render_texture()'s padding leaves a
+    // non-zero pad whose get_tex_scale() makes a full-[0,1]-UV consumer (e.g.
+    // FilterManager) sample only a sub-rectangle.  set_auto_texture_scale(none)
+    // pins this per texture, so it does not depend on the global textures-power-2
+    // policy.  Use set_size_padded() so the pad size is reset to zero in step
+    // with the new size.
+    //
+    // Forcing the size here is also required on a resize: the RenderTarget calls
+    // only GraphicsBuffer::set_size(), not the texture's, so needs_recreation()
+    // (which compares the texture size to tc->_extent) would otherwise see the
+    // old size, skip release()+create_texture(), and leave the cached image view
+    // addressing the previous VkImage.
+    texture->set_auto_texture_scale(ATS_none);
+    texture->set_size_padded(extent.width, extent.height, texture->get_z_size());
 
     DCAST_INTO_R(tc, texture->prepare_now(vkgsg->get_prepared_objects(), vkgsg), false);
 

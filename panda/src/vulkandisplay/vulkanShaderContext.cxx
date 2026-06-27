@@ -870,35 +870,23 @@ fetch_descriptor(VulkanGraphicsStateGuardian *gsg, const Descriptor &desc,
       int view = gsg->get_current_tex_view_offset();
       PT(Texture) texture = desc._binding->fetch_texture(state, id, sampler, view);
 
-      // Choose the layout to sample this texture in.  Normally a sampled image
-      // lives in SHADER_READ_ONLY_OPTIMAL.  But a GPU-generated compute image
-      // (one that has a clear color but no loaded pixel data -- RenderPipeline
-      // marks every compute Image this way; same signal as the SFLOAT format
-      // fix) is frequently ALSO bound as a storage image (image2D/image3D), so
-      // it ping-pongs GENERAL (compute write) <-> SHADER_READ_ONLY (sample).
-      // That flip-flop means a sampler descriptor written while the image is in
-      // READ_ONLY is later consumed after a subsequent compute dispatch has put
-      // the image back in GENERAL -> the recorded descriptor layout no longer
-      // matches the image's layout at execution (VUID-vkCmdDraw-None-09600 /
-      // VkImageMemoryBarrier2-oldLayout-01197) -> the sample reads garbage = the
-      // magenta scattering tables (BUG-SCAT).  GENERAL is a valid layout to
-      // sample from, so for these dual-use compute images we sample in GENERAL
-      // and never transition them to READ_ONLY -- the layout stays stable at
-      // GENERAL for both the storage writes and the samples, so there is no
-      // transition to desync.  Scope: a GPU compute image has a clear color
-      // (GPU-initialized) but is NOT a render-to-texture target -- that excludes
-      // raster render targets (the G-buffer etc., which are also clear-colored
-      // but transition COLOR_ATTACHMENT<->READ_ONLY normally), and excludes
-      // ordinary loaded textures (no clear color).  Their READ_ONLY fast path is
-      // untouched.
+      // Choose the sample layout.  A GPU-generated compute image (clear color
+      // but no loaded pixel data) is often ALSO bound as a storage image, so it
+      // ping-pongs GENERAL (compute write) <-> SHADER_READ_ONLY (sample).  A
+      // sampler descriptor recorded in READ_ONLY can then be consumed after a
+      // later dispatch has put the image back in GENERAL, so the recorded layout
+      // no longer matches the image's layout at execution (VUID-vkCmdDraw-None-
+      // 09600 / VUID-VkImageMemoryBarrier2-oldLayout-01197).  GENERAL is a legal
+      // sample layout, so for these dual-use images sample in GENERAL and never
+      // transition to READ_ONLY, keeping the layout stable.  Scope:
+      // has_clear_color() && !get_render_to_texture(), which excludes raster
+      // render targets (also clear-colored, but transition COLOR_ATTACHMENT<->
+      // READ_ONLY normally) and ordinary loaded textures (no clear color).
       VkImageLayout sample_layout =
         (texture != nullptr && texture->has_clear_color() &&
          !texture->get_render_to_texture())
           ? VK_IMAGE_LAYOUT_GENERAL
           : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      if (getenv("DBG_FORCE_GENERAL")) {
-        sample_layout = VK_IMAGE_LAYOUT_GENERAL;
-      }
 
       VulkanTextureContext *tc;
       tc = gsg->use_texture(texture,

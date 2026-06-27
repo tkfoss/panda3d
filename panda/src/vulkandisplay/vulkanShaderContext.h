@@ -168,6 +168,9 @@ private:
   // bound (since we can only update it once per frame).
   struct DescriptorSet {
     VkDescriptorSet _handle = VK_NULL_HANDLE;
+    // The pool _handle was allocated from, so it can be freed against the right
+    // pool once the descriptor pool has grown (see allocate_descriptor_set).
+    VkDescriptorPool _pool = VK_NULL_HANDLE;
     uint64_t _last_update_frame = 0;
     WeakReferenceList *_weak_ref = nullptr;
   };

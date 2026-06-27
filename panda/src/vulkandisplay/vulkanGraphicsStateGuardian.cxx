@@ -39,47 +39,6 @@
 #include "pointLight.h"
 #include "paramTexture.h"
 
-// ---------------------------------------------------------------------------
-// GPU-hang submit tracer.  When the env var TMO_SUBMIT_TRACE is set, every
-// vkQueueSubmit2 is bracketed by a line written and fsync'd to that file BEFORE
-// the submit and another AFTER it returns.  Because a MoltenVK/Metal GPU hang
-// can freeze (and force a reboot of) the whole machine, ordinary stdout/stderr
-// logs are lost.  fsync'ing each line means the file on disk survives the
-// freeze, so the last "SUBMIT" line with no matching "DONE" names the command
-// buffer that hung.  Zero cost (a single env lookup, cached) when off.
-// ---------------------------------------------------------------------------
-#include <cstdio>
-#include <cstdarg>
-#ifndef _WIN32
-#include <unistd.h>  // fsync
-#endif
-
-static FILE *_tmo_submit_trace_fp = (FILE *)-1;  // -1 = not yet resolved
-
-static FILE *tmo_submit_trace_file() {
-  if (_tmo_submit_trace_fp == (FILE *)-1) {
-    const char *path = getenv("TMO_SUBMIT_TRACE");
-    _tmo_submit_trace_fp = (path && path[0]) ? fopen(path, "w") : nullptr;
-  }
-  return _tmo_submit_trace_fp;
-}
-
-// Non-static so vulkanGraphicsBuffer.cxx (earlier in the composite) can log
-// which named output it is rendering, via a forward prototype there.
-void tmo_submit_trace(const char *fmt, ...) {
-  FILE *fp = tmo_submit_trace_file();
-  if (fp == nullptr) return;
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(fp, fmt, ap);
-  va_end(ap);
-  fputc('\n', fp);
-  fflush(fp);
-#ifndef _WIN32
-  fsync(fileno(fp));  // force the bytes to the platter before we risk a hang
-#endif
-}
-
 static const std::string default_vshader =
   "#version 330\n"
   "in vec4 p3d_Vertex;\n"
@@ -2660,10 +2619,13 @@ update_index_buffer(VulkanIndexBufferContext *ibc,
         }
 
         if (index_type == GeomEnums::NT_uint8) {
-          // Widen to 16-bits, as Vulkan doesn't support 8-bits indices.
+          // Widen to 16-bits, as Vulkan doesn't support 8-bits indices.  The 8-bit
+          // strip-cut index 0xFF must become the 16-bit fixed restart index 0xFFFF
+          // (not 0x00FF), or a primitive-restart cut is lost on widening.
           uint16_t *ptr = (uint16_t *)data;
           for (size_t i = 0; i < num_bytes; i += 2) {
-            *ptr++ = (uint16_t)*client_pointer++;
+            uint8_t v = *client_pointer++;
+            *ptr++ = (v == 0xff) ? (uint16_t)0xffff : (uint16_t)v;
           }
         } else {
           memcpy(data, client_pointer, num_bytes);
@@ -2677,9 +2639,12 @@ update_index_buffer(VulkanIndexBufferContext *ibc,
       } else {
         VulkanMemoryMapping mapping = ibc->_block.map();
         if (index_type == GeomEnums::NT_uint8) {
+          // Widen 8-bit -> 16-bit; map the 8-bit strip-cut index 0xFF to the
+          // 16-bit fixed restart index 0xFFFF (see the staging-buffer path above).
           uint16_t *ptr = (uint16_t *)mapping;
           for (size_t i = 0; i < num_bytes; i += 2) {
-            *ptr++ = (uint16_t)*client_pointer++;
+            uint8_t v = *client_pointer++;
+            *ptr++ = (v == 0xff) ? (uint16_t)0xffff : (uint16_t)v;
           }
         } else {
           memcpy(mapping, client_pointer, num_bytes);
@@ -3007,17 +2972,14 @@ dispatch_compute(int num_groups_x, int num_groups_y, int num_groups_z) {
   PStatGPUTimer timer(this, _current_sc->_compute_dispatch_pcollector);
 #endif
 
-  //TODO: must actually be outside render pass, and on a queue that supports
-  // compute.  Should we have separate pool/queue/buffer for compute?
+  //TODO: use a queue that supports compute (separate pool/queue/buffer?).
   // A compute dispatch is not permitted inside a dynamic render pass
   // (vkCmdBeginRendering..vkCmdEndRendering).  Panda issues compute via a draw
   // callback (ComputeNode), which runs while the target's render pass is active,
-  // so we must suspend that render pass around the dispatch and resume it
-  // afterwards (resuming with LOAD ops so any already-rendered content in the
-  // target is preserved).  Without this, MoltenVK/Metal cannot encode the
-  // dispatch inside the render encoder and the compute work is silently dropped
-  // -- which breaks every compute-driven stage (e.g. RenderPipeline's scattering
-  // precompute, light culling and env-map generation).
+  // so suspend that render pass around the dispatch and resume it afterwards
+  // (resuming with LOAD ops so already-rendered content in the target is
+  // preserved).  Without this, MoltenVK/Metal cannot encode the dispatch inside
+  // the render encoder and the compute work is silently dropped.
   bool suspended = false;
   VulkanFramebuffer *fb = _render_pass_fb;
   DrawableRegion *region = _render_pass_region;
@@ -3038,11 +3000,10 @@ dispatch_compute(int num_groups_x, int num_groups_y, int num_groups_z) {
   // subsequent stages.  This is required for BOTH dispatch paths:
   //  - the in-scene-graph ComputeNode path (suspended==true): the following
   //    draws in the resumed render pass, or a later stage, read these writes;
-  //  - the standalone GraphicsEngine.dispatch_compute path (suspended==false,
-  //    e.g. RenderPipeline's scattering precompute, which runs begin_frame /
-  //    dispatch / end_frame with no render pass): the writes (its 3D-LUT storage
-  //    images) are sampled by later frames/stages.  Without this barrier those
-  //    reads get undefined/stale data -- the scattering sun/sky stayed black.
+  //  - the standalone GraphicsEngine.dispatch_compute path (suspended==false:
+  //    begin_frame / dispatch / end_frame with no render pass): the storage-image
+  //    writes are sampled by later frames/stages.  Without this barrier those
+  //    reads get undefined/stale data.
   VkMemoryBarrier2 barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
   barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
   barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
@@ -3092,6 +3053,7 @@ set_state_and_transform(const RenderState *state,
   bool shader_changed = false;
   VulkanShaderContext *sc = _current_sc;
   Shader *shader = (Shader *)_target_shader->get_shader();
+
   if (sc == nullptr || shader != _current_shader) {
     _current_shader = shader;
 
@@ -3168,13 +3130,9 @@ set_state_and_transform(const RenderState *state,
                                   sc->_tattr_descriptor_set_map,
                                   sc->_tattr_descriptor_set_layout,
                                   target_texture)) {
-      tmo_submit_trace("      UPDATE-TATTR (set rebuilt -> use_texture runs)");
       sc->update_tattr_descriptor_set(this, descriptor_sets[DS_texture_attrib]);
-    } else {
-      tmo_submit_trace("      TATTR cached (update SKIPPED, no barrier)");
     }
   } else {
-    tmo_submit_trace("      TATTR gate-skip (same texattr, no use_texture)");
     first_set = DS_texture_attrib + 1;
   }
 
@@ -3184,14 +3142,10 @@ set_state_and_transform(const RenderState *state,
                                   sc->_sattr_descriptor_set_map,
                                   sc->_sattr_descriptor_set_layout,
                                   _target_shader)) {
-      tmo_submit_trace("      UPDATE-SATTR (set rebuilt -> use_texture runs)");
       sc->update_sattr_descriptor_set(this, descriptor_sets[DS_shader_attrib]);
-    } else {
-      tmo_submit_trace("      SATTR cached (update SKIPPED, no barrier)");
     }
     _state_shader = _target_shader;
   } else {
-    tmo_submit_trace("      SATTR gate-skip (same shader, no use_texture)");
     first_set = DS_shader_attrib + 1;
   }
 
@@ -3337,30 +3291,27 @@ prepare_display_region(DisplayRegionPipelineReader *dr) {
   //
   // The GL->Vulkan vertical flip is done here with a negative-height viewport
   // (VK_KHR_maintenance1 / Vulkan 1.1, supported on MoltenVK), NOT in the
-  // projection matrix (see calc_projection_mat).  A negative-height viewport
-  // flips Y at rasterization for *every* primitive -- including shaders that
-  // write gl_Position without going through the projection matrix.  When the
-  // scene is already inverted (rendering into a flipped target), we don't flip.
-  // The GL->Vulkan vertical flip is done with a negative-height viewport, gated
-  // on whether this render target is itself "inverted".  We must read the flag
-  // from the OUTPUT being rendered (dr->get_window()->get_inverted()), NOT from
-  // _scene_setup: prepare_display_region() runs BEFORE set_scene() installs the
-  // current pass's SceneSetup, so _scene_setup here still holds the PREVIOUS
-  // pass's value (the inverted flag is set in setup_scene(), which runs after
-  // this).  An offscreen render-to-texture buffer is marked inverted (because
-  // _copy_texture_inverted is true on this backend), so its scene must NOT be
-  // viewport-flipped; only the final non-inverted on-screen pass is flipped.
+  // projection matrix (see calc_projection_mat).  Doing it in the matrix only
+  // flips shaders that go through p3d_ModelViewProjectionMatrix; a fullscreen
+  // pass that writes gl_Position directly (the common GL-style post-process /
+  // present quad) would then be wound the opposite way and get back-face culled
+  // -- producing no fragments (the classic "grey window").  A negative-height
+  // viewport instead flips Y at rasterization for *every* primitive, so MVP and
+  // raw-NDC shaders both match the GL backend.
+  //
+  // The flip is gated on whether this render target is itself "inverted".  Read
+  // that flag from the OUTPUT being rendered (dr->get_window()->get_inverted()),
+  // NOT from _scene_setup: prepare_display_region() runs BEFORE set_scene()
+  // installs the current pass's SceneSetup, so _scene_setup here still holds the
+  // PREVIOUS pass's value (the inverted flag is set in setup_scene(), which runs
+  // after this).  An offscreen render-to-texture buffer is marked inverted
+  // (because _copy_texture_inverted is true on this backend), so its scene must
+  // NOT be viewport-flipped; only the final non-inverted on-screen pass is
+  // flipped, and a render-to-texture pass then composites the same way up as the
+  // window pass.  (see repro/repro_filtermanager_flip.py)
   bool win_inverted = (dr->get_window() != nullptr) &&
                       dr->get_window()->get_inverted();
   bool flip_y = !win_inverted;
-
-  if (getenv("DBG_FLIP")) {
-    GraphicsOutput *go = dr->get_window();
-    fprintf(stderr, "DBG_FLIP pdr out=%s win_inverted=%d flip_y=%d count=%d\n",
-            (go != nullptr ? go->get_name().c_str() : "(null)"),
-            (int)win_inverted, (int)flip_y, count);
-    fflush(stderr);
-  }
 
   for (int i = 0; i < count; ++i) {
     int x, y, w, h;
@@ -3526,7 +3477,9 @@ begin_frame(Thread *current_thread, VkSemaphore wait_for) {
   // and frame boundary here when the pool is running low, which is always safe
   // since _render_cmd is null at this point.  This submits the pending work,
   // advances the timeline, and lets get_next_frame_data() reclaim retired
-  // command buffers below.
+  // command buffers below.  (This is platform-independent -- a native Vulkan
+  // driver hits the same CPU spin -- and is reproduced standalone by
+  // repro/repro_many_render_textures.py)
   if (!is_new_clock_frame &&
       _free_command_buffers.size() < (size_t)(2 * _frame_data_capacity)) {
     flush();
@@ -3825,17 +3778,19 @@ finish_frame(FrameData &frame_data) {
   frame_data._pending_free.clear();
 
   if (!frame_data._pending_free_descriptor_sets.empty()) {
-    // Only free individual sets while there is a single pool: once the pool has
-    // grown (see allocate_descriptor_set), a set may belong to a retired pool and
-    // vkFreeDescriptorSets must be given the pool it was allocated from -- which
-    // we don't track per set.  Retired pools are kept alive and freed wholesale at
-    // teardown, so skipping the per-set free here is safe (it only forgoes early
-    // reuse in the rare grown case, e.g. after the pixel inspector ran).
-    if (_retired_descriptor_pools.empty()) {
-      VkResult err;
-      err = vkFreeDescriptorSets(_device, _descriptor_pool,
-                                 frame_data._pending_free_descriptor_sets.size(),
-                                 &frame_data._pending_free_descriptor_sets[0]);
+    // Each set must be freed against the pool it was allocated from, which may
+    // be a retired pool once the pool has grown (see allocate_descriptor_set).
+    // Group the pending sets by pool and free each group in one call.
+    pmap<VkDescriptorPool, pvector<VkDescriptorSet>> by_pool;
+    for (const auto &item : frame_data._pending_free_descriptor_sets) {
+      if (item.first != VK_NULL_HANDLE) {
+        by_pool[item.first].push_back(item.second);
+      }
+    }
+    for (const auto &group : by_pool) {
+      VkResult err = vkFreeDescriptorSets(_device, group.first,
+                                          group.second.size(),
+                                          group.second.data());
       if (err) {
         vulkan_error(err, "Failed to free descriptor sets");
       }
@@ -4176,10 +4131,6 @@ end_command_buffer(VulkanCommandBuffer &&cmd, VkSemaphore signal_done) {
       // the barriers.  This one has no seq number.
       VkCommandBuffer handle = create_command_buffer();
 
-      tmo_submit_trace("  FRESH-BARRIER-CB before CB#%u (img=%zu buf=%zu)",
-                       (unsigned)cmd._seq, _pending_image_barriers.size(),
-                       _pending_buffer_barriers.size());
-
       if (vulkandisplay_cat.is_spam()) {
         vulkandisplay_cat.spam()
           << "Using fresh command buffer for issuing barriers before CB #"
@@ -4398,17 +4349,7 @@ flush() {
   }
 #endif
 
-  tmo_submit_trace("SUBMIT frame=%d clock=%d watermark=%u CB#%u-#%u count=%zu",
-                   (int)frame_data._frame_index, (int)frame_data._clock_frame_number,
-                   (unsigned)frame_data._watermark,
-                   (unsigned)_first_pending_command_buffer_seq,
-                   (unsigned)_last_pending_command_buffer_seq,
-                   _pending_submissions.size());
-
   VkResult err = vkQueueSubmit2(_queue, _pending_submissions.size(), submit_infos, VK_NULL_HANDLE);
-
-  tmo_submit_trace("DONE   frame=%d watermark=%u err=%d",
-                   (int)frame_data._frame_index, (unsigned)frame_data._watermark, (int)err);
 
   // Whether or not the submit succeeded, these command buffers are no longer
   // ours to record into -- ownership passes to the frame data, which reclaims
@@ -4530,14 +4471,13 @@ begin_draw_primitives(const GeomPipelineReader *geom_reader,
 
     default:
       // PT_none: the Geom has no single primitive type at the Geom level (e.g. a
-      // munged geom that did not propagate its primitive type, as happens with
-      // RenderPipeline's tag-state/gbuffer geometry).  With extended dynamic
-      // state the real topology is set per-primitive in do_draw_primitive_with_
-      // topology() via vkCmdSetPrimitiveTopology, so the up-front pipeline only
-      // needs a topology *class*.  Default to the triangle class rather than
-      // refusing to draw the geom (the GL backend likewise does not reject
-      // PT_none); a wrong class would only matter for points/lines, which the
-      // per-primitive draw path will still set correctly within the same class.
+      // munged geom that did not propagate its primitive type).  With extended
+      // dynamic state the real topology is set per-primitive in
+      // do_draw_primitive_with_topology() via vkCmdSetPrimitiveTopology, so the
+      // up-front pipeline only needs a topology *class*.  Default to the triangle
+      // class rather than refusing to draw the geom (the GL backend likewise does
+      // not reject PT_none); a wrong class would only matter for points/lines,
+      // which the per-primitive draw path still sets correctly within the class.
       topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
       break;
     }
@@ -4620,7 +4560,9 @@ draw_triangles_adj(const GeomPrimitivePipelineReader *reader, bool force) {
  */
 bool VulkanGraphicsStateGuardian::
 draw_tristrips(const GeomPrimitivePipelineReader *reader, bool force) {
-  return do_draw_primitive_with_topology(reader, force, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, false);
+  // Strip topology: enable primitive restart so the strip-cut index (0xFFFF/
+  // 0xFFFFFFFF) joining multiple strips in one GeomTristrips is honored as a cut.
+  return do_draw_primitive_with_topology(reader, force, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, true);
 }
 
 /**
@@ -4636,7 +4578,9 @@ draw_tristrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
  */
 bool VulkanGraphicsStateGuardian::
 draw_trifans(const GeomPrimitivePipelineReader *reader, bool force) {
-  return do_draw_primitive_with_topology(reader, force, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, false);
+  // Fan topology: enable primitive restart so a strip-cut index separating
+  // multiple fans in one GeomTrifans is honored as a cut.
+  return do_draw_primitive_with_topology(reader, force, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, true);
 }
 
 /**
@@ -5483,30 +5427,24 @@ choose_fb_config(FbConfig &out, FrameBufferProperties &props,
           formats[i].rgb >= props.get_color_bits() &&
           formats[i].has_float >= props.get_float_color()) {
 
-        // Honor the actually-requested linear/float format for offscreen color
-        // targets instead of forcing B8G8R8A8_SRGB.  An HDR deferred renderer
-        // (RenderPipeline) asks for float/linear G-buffer, lighting and tonemap
-        // intermediates; forcing 8-bit sRGB silently downgraded the whole chain
-        // (washout, clamped material, magenta -- "BUG C").  sRGB is applied only
-        // when actually requested (the props.get_srgb_color() branch above) or on
-        // the swapchain/present target (the preferred_format branch).
+        // Honor the requested linear/float format for offscreen color targets
+        // instead of forcing B8G8R8A8_SRGB.  An HDR deferred renderer requests
+        // float/linear G-buffer and tonemap intermediates; forcing 8-bit sRGB
+        // downgrades the whole chain.  sRGB is used only when actually requested
+        // (the props.get_srgb_color() branch above) or on the swapchain/present
+        // target (the preferred_format branch).
         //
-        // This relies on the get_image_format() float fix below: create_attachment
+        // Relies on the get_image_format() float fix below: create_attachment
         // round-trips a render target's format VkFormat -> Texture::Format ->
         // VkFormat, and without that fix R16G16B16A16_SFLOAT came back as SNORM.
-        // An earlier attempt to change this line WITHOUT that fix is what
-        // "regressed RP across the board".
         if (!props.get_float_color() && props.get_blue_bits() > 0 &&
             formats[i].rgb < 24) {
           // A multi-channel colour buffer that under-specified its bit depth
           // (e.g. make_cube_map's reflection buffer requesting 5,5,5,1) matched a
-          // narrow packed format (R5G6B5 / A1R5G5B5).  GL rounds such requests up
-          // to RGBA8; honoring the literal 5-bit format caused heavy banding and
-          // colour shimmer in complexpbr's dynamic cube reflections.  Round up to
-          // the 8-bit sRGB LDR-colour baseline (which is what these buffers
-          // rendered correctly under before).  Float/HDR targets (RP) take the
-          // branch above and keep their float format; single-channel data buffers
-          // (e.g. RP's R8 AO) have blue_bits == 0 and are unaffected.
+          // narrow packed format (R5G6B5 / A1R5G5B5), which bands badly.  GL
+          // rounds such requests up to RGBA8, so do the same.  Float/HDR targets
+          // take the branch above and keep their float format; single-channel
+          // data buffers have blue_bits == 0 and are unaffected.
           out._color_formats.push_back(VK_FORMAT_B8G8R8A8_SRGB);
           props.set_rgba_bits(8, 8, 8, 8);
         } else {
@@ -5526,14 +5464,11 @@ choose_fb_config(FbConfig &out, FrameBufferProperties &props,
   // pipeline only has one color attachment and the shader's location>=1 outputs
   // are silently dropped (the aux targets stay black).
   for (int i = 0; i < props.get_aux_rgba(); ++i) {
-    // Must match the VkFormat that create_attachment() ultimately gives the aux
-    // image VIEW.  A bound aux texture is round-tripped through
-    // lookup_image_format()/get_image_format(), and get_image_format() maps an
-    // 8-bit RGBA texture (F_rgba8) to B8G8R8A8_UNORM (Panda's canonical 8-bit
-    // ordering), NOT R8G8B8A8_UNORM.  Announcing R8G8B8A8 here while the view is
-    // B8G8R8A8 makes the pipeline's pColorAttachmentFormats disagree with the
-    // bound attachment (VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910;
-    // seen on sgsfb's MRT G-buffer).  Use the same format the view will have.
+    // Must match the VkFormat create_attachment() gives the aux image view: an
+    // 8-bit RGBA texture (F_rgba8) maps to B8G8R8A8_UNORM (Panda's canonical
+    // 8-bit ordering), NOT R8G8B8A8_UNORM.  Announcing a different format makes
+    // the pipeline's pColorAttachmentFormats disagree with the bound attachment
+    // (VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910).
     out._color_formats.push_back(VK_FORMAT_B8G8R8A8_UNORM);
   }
   for (int i = 0; i < props.get_aux_hrgba(); ++i) {
@@ -5957,8 +5892,8 @@ make_pipeline(VulkanShaderContext *sc,
     // integer to float (glVertexAttribPointer on a float attrib), so to match
     // that behaviour we remap the integer format to its *_USCALED / *_SSCALED
     // counterpart, which reads the integer and converts it to float as-is.
-    // This is what makes e.g. a uint16 hardware-skinning transform_index column
-    // bind to simplepbr's `attribute vec4 transform_index;` input.
+    // This is what lets e.g. a uint16 hardware-skinning transform_index column
+    // bind to a `vec4 transform_index` float shader input.
     if (input._scalar_type == ShaderType::ST_float ||
         input._scalar_type == ShaderType::ST_unknown) {
       switch (attrib_desc[i].format) {
@@ -6013,30 +5948,50 @@ make_pipeline(VulkanShaderContext *sc,
   assembly_info.pNext = nullptr;
   assembly_info.flags = 0;
   assembly_info.topology = topology;
-  // Primitive restart is only legal on *_STRIP / *_FAN topologies (and their
-  // adjacency variants); on *_LIST and *_POINT topologies it requires the
-  // primitiveTopologyListRestart feature, which MoltenVK does not support.  So we
-  // must compute a topology-correct static value: enabling it unconditionally on a
-  // list topology is a spec violation (VUID-VkPipelineInputAssemblyStateCreateInfo
-  // -topology-06252).
-#ifndef __APPLE__
+  // Primitive restart must be ENABLED on the strip / fan topologies (and their
+  // adjacency variants) and DISABLED on the list / point topologies.  We advertise
+  // Geom::GR_strip_cut_index (see reset()), so Panda packs several strips into one
+  // GeomTristrips/GeomTrifans/GeomLinestrips separated by the strip-cut index (the
+  // Vulkan "fixed" restart index, 0xFFFF/0xFFFFFFFF).  Per the Vulkan spec, with
+  // primitiveRestartEnable == VK_FALSE that index is consumed as an ordinary vertex
+  // index rather than a cut, so the strips would be joined by a spurious "bridging"
+  // primitive on a conformant driver; restart must be on for strips/fans for the cut
+  // to take effect.  On *_LIST/*_POINT, enabling it statically is a spec violation
+  // without the primitiveTopologyListRestart feature
+  // (VUID-VkPipelineInputAssemblyStateCreateInfo-topology-06252).
+  // NOTE: the strip case is verified by spec + on MoltenVK (which masks it -- see the
+  // __APPLE__ note below); the visible bridging artifact has not yet been observed on
+  // a conformant desktop driver -- run repro/repro_tristrip_cut_index.py there to confirm.
+#ifdef __APPLE__
+  // MoltenVK/Metal: the pipeline is created with DYNAMIC primitive topology (see the
+  // dynamic-state list below), but Metal cannot toggle primitive restart at all -- it
+  // is always on -- and there is no dynamic primitiveRestartEnable on this path.  So
+  // the static value here is what's used, and it must be VK_TRUE: (a) it matches what
+  // Metal actually does, (b) it lets the strip-cut index work, and (c) with dynamic
+  // topology MoltenVK warns "Metal does not support disabling primitive restart" for
+  // ANY pipeline whose static value is FALSE (not just strips), so VK_TRUE is also
+  // what silences that per-pipeline warning.  On a list-topology draw there simply is
+  // no cut index, so restart-enabled is a no-op.  (The desktop path below keeps the
+  // spec-correct per-topology / per-draw value instead.)
+  assembly_info.primitiveRestartEnable = VK_TRUE;
+#else
   if (_supports_extended_dynamic_state2) {
-    // This is enabled dynamically if needed (see do_draw_primitive_with_topology).
+    // Set dynamically per draw instead (see do_draw_primitive_with_topology), where
+    // it is additionally gated on the primitive actually being indexed.
     assembly_info.primitiveRestartEnable = VK_FALSE;
-  } else
-#endif
-  {
-    // On Apple the dynamic primitiveRestartEnable path is disabled (MoltenVK), so
-    // this static value is what's used; pick it per-topology rather than blanket TRUE.
-    // (Matches the non-dynamic non-Apple set; restart on triangle strips/fans is left
-    // off to match the established behavior — Panda doesn't emit restart for those.)
+  } else {
+    // Static per-topology value: ON for strip/fan (to honor the strip-cut index),
+    // OFF for list/point (where enabling it without primitiveTopologyListRestart is
+    // a spec violation, VUID-...-topology-06252).
     assembly_info.primitiveRestartEnable = (
       topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
-      //topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
-      //topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN ||
+      topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
+      topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN ||
       topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
-      topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY);
+      topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY)
+      ? VK_TRUE : VK_FALSE;
   }
+#endif
 
   VkPipelineViewportStateCreateInfo viewport_info;
   viewport_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -6396,12 +6351,12 @@ make_descriptor_pool() const {
  * pool.  If the current pool is exhausted (VK_ERROR_OUT_OF_POOL_MEMORY or
  * VK_ERROR_FRAGMENTED_POOL), retires it and allocates a fresh pool, then
  * retries -- so the backend grows its descriptor capacity on demand instead of
- * failing (and crashing) when a state-heavy frame, e.g. RenderPipeline's pixel
- * inspector / pipe viewer, needs more than the initial 1024 sets.  Returns true
- * on success.
+ * failing (and crashing) when a state-heavy frame needs more than the initial
+ * 1024 sets.  Returns true on success.
  */
 bool VulkanGraphicsStateGuardian::
-allocate_descriptor_set(VkDescriptorSetLayout layout, VkDescriptorSet &out) {
+allocate_descriptor_set(VkDescriptorSetLayout layout, VkDescriptorSet &out,
+                        VkDescriptorPool *out_pool) {
   VkDescriptorSetAllocateInfo alloc_info;
   alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
   alloc_info.pNext = nullptr;
@@ -6426,6 +6381,9 @@ allocate_descriptor_set(VkDescriptorSetLayout layout, VkDescriptorSet &out) {
     vulkan_error(err, "Failed to allocate descriptor set");
     out = VK_NULL_HANDLE;
     return false;
+  }
+  if (out_pool != nullptr) {
+    *out_pool = alloc_info.descriptorPool;
   }
   return true;
 }
@@ -6469,13 +6427,13 @@ get_attrib_descriptor_set(VkDescriptorSet &out,
       delete set._weak_ref;
     }
 
-    _frame_data->_pending_free_descriptor_sets.push_back(set._handle);
+    _frame_data->_pending_free_descriptor_sets.push_back({set._pool, set._handle});
     set._handle = VK_NULL_HANDLE;
   }
 
   VulkanShaderContext::DescriptorSet set;
 
-  if (!allocate_descriptor_set(layout, set._handle)) {
+  if (!allocate_descriptor_set(layout, set._handle, &set._pool)) {
     return false;
   }
 
@@ -6581,7 +6539,8 @@ update_global_descriptor_set() {
   nassertr(_global_descriptor_set_layout != VK_NULL_HANDLE, false);
 
   if (_global_descriptor_set != VK_NULL_HANDLE) {
-    get_frame_data()._pending_free_descriptor_sets.push_back(_global_descriptor_set);
+    get_frame_data()._pending_free_descriptor_sets.push_back(
+      {_global_descriptor_set_pool, _global_descriptor_set});
     _global_descriptor_set = VK_NULL_HANDLE;
   }
 
@@ -6597,6 +6556,7 @@ update_global_descriptor_set() {
     vulkan_error(err, "Failed to allocate descriptor set for globals");
     return false;
   }
+  _global_descriptor_set_pool = _descriptor_pool;
 
   uint32_t i = 0;
   VkWriteDescriptorSet write[1];
@@ -6639,17 +6599,14 @@ bool VulkanGraphicsStateGuardian::
 update_dynamic_uniform_descriptor_set(VulkanShaderContext *sc) {
   nassertr(sc->_dynamic_uniform_descriptor_set_layout != VK_NULL_HANDLE, false);
 
-  // Create a descriptor set for the UBOs.
-  VkDescriptorSetAllocateInfo alloc_info;
-  alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  alloc_info.pNext = nullptr;
-  alloc_info.descriptorPool = _descriptor_pool;
-  alloc_info.descriptorSetCount = 1;
-  alloc_info.pSetLayouts = &sc->_dynamic_uniform_descriptor_set_layout;
-  VkResult
-  err = vkAllocateDescriptorSets(_device, &alloc_info, &sc->_uniform_descriptor_set);
-  if (err) {
-    vulkan_error(err, "Failed to allocate descriptor set for dynamic uniforms");
+  // Create a descriptor set for the UBOs.  Go through allocate_descriptor_set so
+  // that a full pool is grown on demand (retire + fresh pool) rather than failing
+  // -- otherwise repeatedly preparing new shader contexts (e.g. reloading shaders
+  // many times) exhausts the fixed pool with "Out of pool memory".
+  if (!allocate_descriptor_set(sc->_dynamic_uniform_descriptor_set_layout,
+                               sc->_uniform_descriptor_set)) {
+    vulkandisplay_cat.error()
+      << "Failed to allocate descriptor set for dynamic uniforms.\n";
     return false;
   }
 
@@ -7077,27 +7034,22 @@ get_image_format(const Texture *texture) const {
 
   bool is_signed = !Texture::is_unsigned(component_type);
   bool is_srgb = Texture::is_srgb(format);
-  // A 16-bit floating-point render target (e.g. RenderPipeline's G-buffer/HDR
-  // aux) must map F_rgba16/F_rgb16/F_rg16/F_r16 + T_float to the SFLOAT VkFormat,
-  // not UNORM/SNORM -- otherwise create_attachment's VkFormat->Texture::Format->
-  // VkFormat round-trip silently downgrades it (BUG C).
+  // A float render target (F_rgba16/F_rgb16/F_rg16/F_r16 + T_float) must map to
+  // the SFLOAT VkFormat, not UNORM/SNORM -- otherwise create_attachment's
+  // VkFormat->Texture::Format->VkFormat round-trip downgrades it.
   //
-  // The same applies to GPU-generated STORAGE images written by compute as
-  // image2D/image3D (e.g. RenderPipeline's precomputed scattering tables
-  // Img3D-scat-inscat / Img2D-scat-irrad): the shader declares them rgba16f
-  // (SFLOAT), so the view format must match exactly or every load/store yields
-  // undefined values (BUG F5).  Those images are NOT render-to-texture, so the
-  // old render-to-texture-only gate missed them.
+  // The same applies to GPU-generated storage images written by compute as
+  // image2D/image3D: the shader declares them rgba16f (SFLOAT), so the view
+  // format must match exactly or every load/store yields undefined values.
+  // Those images are NOT render-to-texture, so a render-to-texture-only gate
+  // would miss them.
   //
   // We therefore treat a float-component texture as SFLOAT when it is either a
   // render target OR a GPU-initialized image (it has a clear color but no loaded
-  // pixel data -- RenderPipeline marks every compute Image this way via
-  // set_clear_color() at construction).  Loaded 16-bit textures that have a float
-  // component type but hold normalized pixel data (e.g. simplepbr's baked
-  // brdf_lut / filtered env map) have no clear color and are not render targets,
-  // so they keep their existing UNORM/SNORM interpretation and are not disturbed.
-  // (has_clear_color() is set at construction, so unlike has_ram_image() it does
-  // not race the upload of a loaded texture.)
+  // pixel data).  Loaded textures with a float component type but normalized
+  // pixel data have no clear color and are not render targets, so they keep their
+  // existing UNORM/SNORM interpretation.  (has_clear_color() is set at
+  // construction, so unlike has_ram_image() it does not race a texture upload.)
   bool is_float = (component_type == Texture::T_float ||
                    component_type == Texture::T_half_float)
                   && (texture->get_render_to_texture() ||
@@ -7198,9 +7150,9 @@ get_image_format(const Texture *texture) const {
     // F_rgb is "any RGB"; the data may be 16-bit or float.  Panda stores 8-bit
     // RGB as BGR (hence B8G8R8) but 16-bit/float RGB as RGB (hence R16G16B16 /
     // SFLOAT), matching the explicit F_rgb8/F_rgb16 cases below.  Returning the
-    // 8-bit format for a 16-bit texture made the upload read 16-bit data as
-    // 8-bit -> scrambled (RenderPipeline's 64^3 colour-grading LUT -> rainbow).
-    // The 3-channel non-8-bit formats are expanded to RGBA in create_texture().
+    // 8-bit format for a 16-bit texture made the upload read 16-bit data at the
+    // wrong stride.  The 3-channel non-8-bit formats are expanded to RGBA in
+    // create_texture().
     if (is_float) {
       return (texture->get_component_width() >= 4) ? VK_FORMAT_R32G32B32_SFLOAT
                                                    : VK_FORMAT_R16G16B16_SFLOAT;

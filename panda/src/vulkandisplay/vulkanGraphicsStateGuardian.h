@@ -236,7 +236,8 @@ public:
   };
 
   VkDescriptorPool make_descriptor_pool() const;
-  bool allocate_descriptor_set(VkDescriptorSetLayout layout, VkDescriptorSet &out);
+  bool allocate_descriptor_set(VkDescriptorSetLayout layout, VkDescriptorSet &out,
+                               VkDescriptorPool *out_pool = nullptr);
 
   bool get_attrib_descriptor_set(VkDescriptorSet &out,
                                  VulkanShaderContext::AttribDescriptorSetMap &map,
@@ -356,6 +357,9 @@ private:
   // resources in the future.
   VkDescriptorSetLayout _global_descriptor_set_layout = VK_NULL_HANDLE;
   VkDescriptorSet _global_descriptor_set = VK_NULL_HANDLE;
+  // The pool _global_descriptor_set was allocated from, so it can be freed
+  // against the right pool after the descriptor pool has grown.
+  VkDescriptorPool _global_descriptor_set_pool = VK_NULL_HANDLE;
   VkPipelineLayout _initial_pipeline_layout = VK_NULL_HANDLE;
 
   // Layouts used for the LightAttrib and dynamic uniform descriptor sets.

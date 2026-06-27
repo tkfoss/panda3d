@@ -67,11 +67,10 @@ needs_recreation() const {
  * layer >= 0 selects a single array layer / cube face / z-slice; layer < 0
  * keeps all layers (a layered view).
  *
- * This exists because a shader image input bound with a specific mip/z (e.g.
- * RenderPipeline's bloom downsample/upsample pyramid, or its prefiltered IBL
- * cubemap) must imageStore into exactly that subresource; get_image_view()
- * returns the whole-image view (baseMipLevel 0, all levels), which would send
- * every store to mip 0 and leave the other levels unwritten.
+ * Needed because a shader image input bound with a specific mip/layer must
+ * imageStore into exactly that subresource; get_image_view() returns the
+ * whole-image view (baseMipLevel 0, all levels), which would send every store
+ * to mip 0 and leave the other levels unwritten.
  */
 VkImageView VulkanTextureContext::
 get_storage_image_view(VkDevice device, int view, int mip, int layer) {
@@ -151,14 +150,6 @@ get_storage_image_view(VkDevice device, int view, int mip, int layer) {
   }
 
   _storage_image_views[key] = image_view;
-  if (getenv("DBG_BLOOM_MIP")) {
-    fprintf(stderr, "[DBG_SIV] created storage view '%s' view=%d mip=%d layer=%d "
-            "baseLayer=%u layerCount=%u (mip_levels=%u array_layers=%u)\n",
-            get_texture() ? get_texture()->get_name().c_str() : "?",
-            view, mip, layer, base_layer,
-            view_info.subresourceRange.layerCount, _mip_levels, _array_layers);
-    fflush(stderr);
-  }
   return image_view;
 }
 

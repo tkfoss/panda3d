@@ -77,9 +77,9 @@ VulkanGraphicsPipe() : _max_allocation_size(0) {
     vkEnumerateInstanceLayerProperties(&num_inst_layers, inst_layers);
     // Only enable the validation layer when explicitly requested (vk-validate).
     // It is off by default: it adds significant overhead, and some SDK versions
-    // crash inside the layer while validating certain shader modules (observed
-    // with LunarG 1.4.350.1 on RenderPipeline's shaders), which would otherwise
-    // make every offscreen render abort.
+    // crash inside the layer while validating certain complex shader modules
+    // (observed with LunarG 1.4.350.1), which would otherwise make every
+    // offscreen render abort.
     if (vulkan_enable_validation) {
       for (uint32_t i = 0; i < num_inst_layers; ++i) {
         if (strcmp(inst_layers[i].layerName, "VK_LAYER_KHRONOS_validation") == 0) {
