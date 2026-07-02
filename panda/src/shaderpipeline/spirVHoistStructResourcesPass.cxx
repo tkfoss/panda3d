@@ -201,8 +201,17 @@ transform_definition_op(Instruction op) {
         uint32_t var_id = op.args[1];
         spv::StorageClass storage_class = (spv::StorageClass)op.args[2];
 
-        // The struct type has been rebuilt without the hoisted members.
-        _db.modify_definition(var_id)._type = resolve_type(type_id);
+        // Point the variable at the rebuilt struct (the hoisted members
+        // removed).  But if EVERY member was a resource, the struct became
+        // empty and was deleted entirely (see _remove_empty_structs); a deleted
+        // type is not re-emitted, so resolve_type() would assert on it.  In that
+        // case leave the variable's type untouched -- it is deleted below anyway
+        // -- and only harvest its hoisted members here.  (A uniform struct whose
+        // members are all opaque resources, e.g. { sampler2D albedo, normal; },
+        // is what triggers this; see repro/repro_hoist_all_resource_struct.py.)
+        if (!is_deleted(type_id)) {
+          _db.modify_definition(var_id)._type = resolve_type(type_id);
+        }
 
         for (const auto &pair : ait->second) {
           const ShaderType *new_type = pair.first;

@@ -181,6 +181,11 @@ private:
     // pool once the descriptor pool has grown (see allocate_descriptor_set).
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     uint64_t _last_update_frame = 0;
+    // The global-uniform-buffer generation this set was last written against.
+    // If the ring grows (generation bumped), a set whose binding 0 captured the
+    // now-freed VkBuffer must be reallocated fresh rather than reused (only the
+    // ShaderAttrib set has such a binding; the others leave this at 0).
+    uint64_t _buffer_generation = 0;
     WeakReferenceList *_weak_ref = nullptr;
   };
   typedef pmap<const RenderAttrib *, DescriptorSet> AttribDescriptorSetMap;

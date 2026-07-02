@@ -751,9 +751,17 @@ reset() {
   _supports_timer_query = limits.timestampComputeAndGraphics;
   _timer_query_factor = 0.000000001 * limits.timestampPeriod;
 
-  // Set to indicate that we get an inverted result when we copy the
-  // framebuffer to a texture.
-  _copy_texture_inverted = true;
+  // framebuffer_copy_to_texture() copies straight (srcOffset.y==dstOffset.y==0,
+  // no Y flip), so a framebuffer->texture copy on this backend does NOT invert.
+  // Declaring it inverted made Panda render every RTT upside-down (gated off the
+  // per-target `inverted` flag in prepare_display_region) to pre-compensate for
+  // an inversion that never happens: fine for an RTM_copy target that a later
+  // consumer re-inverts, but wrong for an RTM_bind_or_copy target (RenderPipeline's
+  // deferred chain) that is sampled directly -- it ended up stored/sampled
+  // upside-down (BUG D).  With this false, RTTs are viewport-flipped like the
+  // window, so their stored content is upright and matches the GL backend.
+  // TODO: rp ok now, everythign else isnt.
+  _copy_texture_inverted = false;
 
   // Similarly with these capabilities flags.
   _supports_multisample = true;
@@ -3171,12 +3179,20 @@ set_state_and_transform(const RenderState *state,
     first_set = DS_texture_attrib + 1;
   }
 
+  // Remember whether this draw ends up (re)binding the ShaderAttrib set, so we
+  // can re-point it below if a later ring grow (in update_dynamic_uniforms)
+  // frees the global uniform buffer its binding 0 captured.
+  bool binds_sattr = false;
   if (first_set < DS_shader_attrib || shader_changed ||
       _target_shader != _state_shader) {
+    binds_sattr = true;
+    // update_sattr_descriptor_set writes binding 0 from the ring uniform
+    // buffer, so key the cached set on the current ring generation: a set
+    // written before an intervening grow must be reallocated, not reused.
     if (get_attrib_descriptor_set(descriptor_sets[DS_shader_attrib],
                                   sc->_sattr_descriptor_set_map,
                                   sc->_sattr_descriptor_set_layout,
-                                  _target_shader)) {
+                                  _target_shader, _uniform_buffer_generation)) {
       sc->update_sattr_descriptor_set(this, descriptor_sets[DS_shader_attrib]);
     }
     _state_shader = _target_shader;
@@ -3193,15 +3209,19 @@ set_state_and_transform(const RenderState *state,
         target_color->get_color_type() == ColorAttrib::T_flat) {
       //FIXME: this doesn't need to be aligned to minUniformBufferOffsetAlignment,
       // which can be way more excessive (up to 256 bytes) than needed.
+      _current_flat_color = LCAST(float, target_color->get_color());
+      _current_color_is_flat = true;
       float *ptr = (float *)alloc_dynamic_uniform_buffer(16, _current_color_buffer, _current_color_offset);
-      ptr[0] = target_color->get_color()[0];
-      ptr[1] = target_color->get_color()[1];
-      ptr[2] = target_color->get_color()[2];
-      ptr[3] = target_color->get_color()[3];
+      memcpy(ptr, _current_flat_color.get_data(), 16);
     } else {
+      _current_color_is_flat = false;
       _current_color_buffer = _uniform_buffer;
       _current_color_offset = _uniform_buffer_white_offset;
     }
+    // Remember which ring generation this handle came from, so a later grow
+    // (in set_state_and_transform below or in begin_draw_primitives) that frees
+    // it can be detected and the binding re-pointed before the draw.
+    _current_color_generation = _uniform_buffer_generation;
   }
 
   // Support this deprecated way of specifying depth range.
@@ -3215,6 +3235,7 @@ set_state_and_transform(const RenderState *state,
   //TODO: properly compute altered field.
   uint32_t num_offsets = 0;
   uint32_t offset = 0;
+  uint64_t generation_before_dynamic = _uniform_buffer_generation;
   if (sc->_other_state_block._size > 0) {
     // NB. this has to be done first since it may invalidate descriptor sets
     // returned by get_attrib_descriptor_set.
@@ -3222,6 +3243,39 @@ set_state_and_transform(const RenderState *state,
     num_offsets = 1;
   }
   _current_dynamic_uniform_offset = offset;
+
+  // If update_dynamic_uniforms grew the ring, the ShaderAttrib set written
+  // above (and the flat-color vertex binding) now point at the just-freed
+  // VkBuffer.  Re-point them before the bind/draw records the stale handle.
+  // (The set has not been recorded into the command buffer yet, so rewriting
+  // it in place is safe; get_attrib_descriptor_set reallocates it because its
+  // recorded generation is now stale.)
+  if (_uniform_buffer_generation != generation_before_dynamic) {
+    // Re-point the flat-color vertex binding first (its small alloc could in
+    // principle grow the freshly-doubled ring again, which the sattr rewrite
+    // below must then observe).
+    repoint_flat_color_buffer();
+    // Rewrite the ShaderAttrib set last, so its binding 0 captures the final
+    // ring buffer even if the color re-upload grew it once more.  If this draw
+    // was going to reuse the already-bound set (first_set > DS_shader_attrib),
+    // that set now references the freed buffer too, so pull DS_shader_attrib
+    // back into the bound range and rebind a fresh one.
+    if (sc->_sattr_descriptor_set_layout != VK_NULL_HANDLE) {
+      if (get_attrib_descriptor_set(descriptor_sets[DS_shader_attrib],
+                                    sc->_sattr_descriptor_set_map,
+                                    sc->_sattr_descriptor_set_layout,
+                                    _target_shader, _uniform_buffer_generation)) {
+        sc->update_sattr_descriptor_set(this, descriptor_sets[DS_shader_attrib]);
+      }
+      if (!binds_sattr) {
+        // The bind range starts at first_set; DS_shader_attrib was above it.
+        // Rebinding the whole [DS_shader_attrib, DS_SET_COUNT) range is correct
+        // because the sets between are re-supplied from descriptor_sets[] (they
+        // were left populated from this or a prior draw's get_attrib calls).
+        first_set = DS_shader_attrib;
+      }
+    }
+  }
 
   // Note that this set may be recreated by update_dynamic_uniforms, above.
   descriptor_sets[DS_dynamic_uniforms] = sc->_uniform_descriptor_set;
@@ -4455,6 +4509,11 @@ begin_draw_primitives(const GeomPipelineReader *geom_reader,
                               1, &offset);
     }
   }
+
+  // The D_vertex_data refetch above (or any other allocation since
+  // set_state_and_transform) may have grown the ring and freed the buffer the
+  // flat-color vertex binding points at.  Re-point it before it is bound below.
+  repoint_flat_color_buffer();
 
   // Prepare and bind the vertex buffers.
   size_t num_arrays = data_reader->get_num_arrays();
@@ -6510,7 +6569,8 @@ bool VulkanGraphicsStateGuardian::
 get_attrib_descriptor_set(VkDescriptorSet &out,
                           VulkanShaderContext::AttribDescriptorSetMap &map,
                           VkDescriptorSetLayout layout,
-                          const RenderAttrib *attrib) {
+                          const RenderAttrib *attrib,
+                          uint64_t min_buffer_generation) {
   // Look it up in the attribute map.
   if (auto it = map.find(attrib); it != map.end()) {
     // Found something.  Check that it's not just a different state that has
@@ -6519,22 +6579,32 @@ get_attrib_descriptor_set(VkDescriptorSet &out,
     if (!set._weak_ref->was_deleted()) {
       // Nope, it's not deleted, which must mean it's the same one, which must
       // mean we have a live pointer to it (so no need to lock anything).
-      out = set._handle;
 
-      bool is_current = _frame_counter == set._last_update_frame;
-      if (is_current) {
-        return false;
-      }
-      else if (set._last_update_frame <= _last_finished_frame) {
-        // We have a descriptor set from a frame that has finished, so we can
-        // safely update it.
-        set._last_update_frame = _frame_counter;
-        return true;
+      // A set whose binding 0 captured a now-freed global uniform buffer (the
+      // ring grew since it was written) must not be reused, even in the same
+      // frame: its recorded VkBuffer handle is invalid, and it cannot be
+      // updated in place if it has already been recorded into this frame's
+      // command buffer.  Fall through to allocate a fresh set below.
+      if (set._buffer_generation >= min_buffer_generation) {
+        out = set._handle;
+
+        bool is_current = _frame_counter == set._last_update_frame;
+        if (is_current) {
+          return false;
+        }
+        else if (set._last_update_frame <= _last_finished_frame) {
+          // We have a descriptor set from a frame that has finished, so we can
+          // safely update it.
+          set._last_update_frame = _frame_counter;
+          set._buffer_generation = min_buffer_generation;
+          return true;
+        }
       }
     }
 
-    // It's been deleted, which means it's for a very different state.  We can
-    // let go of this one and create a new one instead.
+    // It's been deleted (a very different state), or its captured buffer was
+    // freed by a ring grow.  Either way let go of this one and create a new
+    // one instead.
     if (!set._weak_ref->unref()) {
       delete set._weak_ref;
     }
@@ -6553,6 +6623,7 @@ get_attrib_descriptor_set(VkDescriptorSet &out,
   set._weak_ref = ((RenderAttrib *)attrib)->weak_ref();
 
   set._last_update_frame = _frame_counter;
+  set._buffer_generation = min_buffer_generation;
 
   out = set._handle;
   map[attrib] = std::move(set);
@@ -6741,6 +6812,31 @@ update_dynamic_uniform_descriptor_set(VulkanShaderContext *sc) {
 }
 
 /**
+ * Re-points _current_color_buffer (the flat-color / white vertex binding) at
+ * the current global uniform buffer if a ring grow has freed the buffer it was
+ * captured from.  A no-op unless a grow happened since it was set.  Called both
+ * at the end of set_state_and_transform and in begin_draw_primitives, since a
+ * grow can occur in either (e.g. the D_vertex_data transform-table refetch)
+ * before the binding is recorded.
+ */
+void VulkanGraphicsStateGuardian::
+repoint_flat_color_buffer() {
+  if (_current_color_buffer == VK_NULL_HANDLE ||
+      _current_color_generation == _uniform_buffer_generation) {
+    return;
+  }
+  if (_current_color_is_flat) {
+    // Re-upload the flat color into the new ring.
+    float *ptr = (float *)alloc_dynamic_uniform_buffer(16, _current_color_buffer, _current_color_offset);
+    memcpy(ptr, _current_flat_color.get_data(), 16);
+  } else {
+    _current_color_buffer = _uniform_buffer;
+    _current_color_offset = _uniform_buffer_white_offset;
+  }
+  _current_color_generation = _uniform_buffer_generation;
+}
+
+/**
  * Returns a writable pointer to the dynamic uniform buffer.
  */
 void *VulkanGraphicsStateGuardian::
@@ -6799,6 +6895,11 @@ alloc_dynamic_uniform_buffer(VkDeviceSize size, VkBuffer &buffer, uint32_t &offs
   _uniform_buffer = buffer;
   _uniform_buffer_memory = std::move(block);
   _uniform_buffer_ptr = ptr;
+
+  // The old VkBuffer is now scheduled for destruction, so any descriptor set or
+  // vertex binding that still references it must re-point before the next draw
+  // records it (see _uniform_buffer_generation and its consumers).
+  ++_uniform_buffer_generation;
 
   _uniform_buffer_allocator.reset(new_capacity);
 

@@ -246,12 +246,14 @@ public:
   bool get_attrib_descriptor_set(VkDescriptorSet &out,
                                  VulkanShaderContext::AttribDescriptorSetMap &map,
                                  VkDescriptorSetLayout layout,
-                                 const RenderAttrib *attrib);
+                                 const RenderAttrib *attrib,
+                                 uint64_t min_buffer_generation = 0);
 
   bool update_global_descriptor_set();
   bool update_lattr_descriptor_set(VkDescriptorSet ds, const LightAttrib *attr);
   bool update_dynamic_uniform_descriptor_set(VulkanShaderContext *sc);
   void *alloc_dynamic_uniform_buffer(VkDeviceSize size, VkBuffer &buffer, uint32_t &offset);
+  void repoint_flat_color_buffer();
 
   INLINE bool get_transform_buffer(const TransformTable *table, uint32_t &offset);
   INLINE bool get_transform_buffer(const InstanceList *instances, uint32_t &offset);
@@ -307,10 +309,25 @@ private:
   CircularAllocator _uniform_buffer_allocator;
   void *_uniform_buffer_ptr = nullptr;
   VkDeviceSize _uniform_buffer_max_used = 0;
+
+  // Bumped every time alloc_dynamic_uniform_buffer grows the ring and schedules
+  // the old VkBuffer for destruction.  A cached ShaderAttrib descriptor set
+  // (which captures the ring handle in a non-dynamic UBO binding) or the
+  // flat-color vertex binding recorded before the grow would otherwise keep the
+  // freed handle and cause "Invalid Resource" device loss; both re-point when
+  // their recorded generation is older than this.
+  uint64_t _uniform_buffer_generation = 0;
   uint32_t _current_dynamic_uniform_offset = 0;
   uint32_t _uniform_buffer_white_offset = 0;
   VkBuffer _current_color_buffer = VK_NULL_HANDLE;
   uint32_t _current_color_offset = 0;
+  // Ring generation _current_color_buffer was captured at, so begin_draw_-
+  // primitives can detect a grow that happened after set_state_and_transform
+  // (e.g. the D_vertex_data transform-table refetch) freed it before it is
+  // bound as the flat-color vertex buffer.
+  uint64_t _current_color_generation = 0;
+  LColorf _current_flat_color = LColorf(1, 1, 1, 1);
+  bool _current_color_is_flat = false;
 
   // Separate SSBO for transform matrices, used for skinning and instancing.
   // We could have used the above buffer, but this one isn't circular, since we
