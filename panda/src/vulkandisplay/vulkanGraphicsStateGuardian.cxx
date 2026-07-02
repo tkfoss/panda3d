@@ -156,6 +156,11 @@ reset() {
 
   // Enable all features we may want to use, if they are supported.
   VkPhysicalDeviceFeatures2 enabled_features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+  // Bounds-checked buffer access: the backend binds a small placeholder buffer
+  // for storage buffers the app never provided (see fetch_descriptor and
+  // update_global_descriptor_set), so a shader that actually reads such a
+  // buffer must get defined out-of-bounds behavior rather than UB.
+  enabled_features.features.robustBufferAccess = features.robustBufferAccess;
   enabled_features.features.imageCubeArray = features.imageCubeArray;
   enabled_features.features.geometryShader = features.geometryShader;
   enabled_features.features.tessellationShader = features.tessellationShader;
@@ -1912,7 +1917,7 @@ upload_texture(VulkanTextureContext *tc, CompletionToken token) {
         const uint32_t *src32_end = (const uint32_t *)(src + src_size);
         uint32_t *dest32 = (uint32_t *)dest;
 
-        for (; src32 < src32_end; ++src32) {
+        while (src32 < src32_end) {
           uint32_t v = *src32++;
           *dest32++ = (v & 0xff00ff00) | ((v & 0x00ff0000) >> 16) | ((v & 0x000000ff) << 16);
         }
@@ -2975,16 +2980,41 @@ dispatch_compute(int num_groups_x, int num_groups_y, int num_groups_z) {
   //TODO: use a queue that supports compute (separate pool/queue/buffer?).
   // A compute dispatch is not permitted inside a dynamic render pass
   // (vkCmdBeginRendering..vkCmdEndRendering).  Panda issues compute via a draw
-  // callback (ComputeNode), which runs while the target's render pass is active,
-  // so suspend that render pass around the dispatch and resume it afterwards
-  // (resuming with LOAD ops so already-rendered content in the target is
-  // preserved).  Without this, MoltenVK/Metal cannot encode the dispatch inside
-  // the render encoder and the compute work is silently dropped.
+  // callback (ComputeNode), which runs while the target's render pass is
+  // active, so the pass must be split into two self-contained instances around
+  // the dispatch.  (The suspend/resume render pass mechanism cannot be used
+  // here: the spec forbids action and synchronization commands between
+  // suspending and resuming instances.)  Without the split, MoltenVK/Metal
+  // cannot encode the dispatch inside the render encoder and the compute work
+  // is silently dropped.
   bool suspended = false;
+  bool resume_with_load = false;
   VulkanFramebuffer *fb = _render_pass_fb;
   DrawableRegion *region = _render_pass_region;
-  if (_in_render_pass) {
-    nassertv(fb != nullptr);
+  if (fb != nullptr) {
+    if (_render_pass_draw_count == 0) {
+      // Nothing has been drawn into this instance yet, so the re-begun
+      // instance can simply replay the clears (resume=false) — lossless
+      // regardless of the attachments' store ops.  This is the common case of
+      // compute stages that run at the start of a target's draw order.
+      resume_with_load = false;
+    } else {
+      // Content was already drawn, so the re-begun instance must LOAD it,
+      // which requires this instance to have stored it.  begin_rendering()
+      // forces storeOp STORE once the framebuffer is known to be split by
+      // compute; the very first split of this target was begun with its
+      // configured store ops, so attachments with STORE_OP_DONT_CARE come
+      // back undefined for the remainder of this frame only.
+      resume_with_load = true;
+      if (!fb->_preserve_on_suspend) {
+        fb->_preserve_on_suspend = true;
+        vulkandisplay_cat.warning()
+          << "Compute dispatch split a render pass mid-draw; attachments with "
+             "store_op DONT_CARE may show artifacts for this frame only.  "
+             "Subsequent frames preserve attachment contents across the "
+             "dispatch.\n";
+      }
+    }
     fb->end_rendering(this);
     suspended = true;
   }
@@ -3008,15 +3038,20 @@ dispatch_compute(int num_groups_x, int num_groups_y, int num_groups_z) {
   barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
   barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
   barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-  barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+  // MEMORY_READ|MEMORY_WRITE rather than SHADER_READ|SHADER_WRITE: the consumer
+  // may also be a transfer command (e.g. extract_texture_data or a
+  // framebuffer_copy_to_ram of a compute-written image), which SHADER_* access
+  // does not cover.
+  barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
   VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
   dep.memoryBarrierCount = 1;
   dep.pMemoryBarriers = &barrier;
   vkCmdPipelineBarrier2(_render_cmd, &dep);
 
   if (suspended) {
-    // Resume the suspended render pass.
-    fb->begin_rendering(this, region, true);
+    // Re-begin the split render pass (replaying the clears if nothing had been
+    // drawn yet, else loading the stored contents).
+    fb->begin_rendering(this, region, resume_with_load, _render_pass_cumulative);
   }
 }
 
@@ -3266,6 +3301,10 @@ clear(DrawableRegion *clearable) {
 
   if (ai > 0) {
     vkCmdClearAttachments(_render_cmd, ai, attachments, _viewports.size(), rects);
+    // This clear is content that a compute-dispatch split must preserve; the
+    // whole-pass load ops replayed by a resume=false re-begin would not redo it
+    // (it may cover a different region).
+    ++_render_pass_draw_count;
   }
 }
 
@@ -3316,19 +3355,7 @@ prepare_display_region(DisplayRegionPipelineReader *dr) {
   for (int i = 0; i < count; ++i) {
     int x, y, w, h;
     dr->get_region_pixels_i(i, x, y, w, h);
-    viewports[i].x = x;
-    viewports[i].width = w;
-    viewports[i].minDepth = min_depth;
-    viewports[i].maxDepth = max_depth;
-    if (flip_y) {
-      // Negative-height viewport: origin at the bottom edge (top-left space),
-      // height negative, so NDC +1 maps to the top of the region.
-      viewports[i].y = y + h;
-      viewports[i].height = -h;
-    } else {
-      viewports[i].y = y;
-      viewports[i].height = h;
-    }
+    fill_viewport(viewports[i], x, y, w, h, min_depth, max_depth, flip_y);
 
     // Scissor is always the positive, top-left-origin framebuffer rect.
     _viewports[i].offset.x = x;
@@ -4412,6 +4439,23 @@ begin_draw_primitives(const GeomPipelineReader *geom_reader,
     _instanced = false;
   }
 
+  // Uniforms that depend on the vertex data (p3d_TransformTable and
+  // p3d_SliderTable) can only be fetched here, now that the base class has
+  // bound the data reader — set_state_and_transform runs before the reader is
+  // set (and only once per state change, while the vertex data changes with
+  // every geom).  Refetch the block and rebind its new dynamic offset.  Cf.
+  // the GL backend, which ORs D_vertex_data into `altered` from its
+  // begin_draw_primitives-driven update for the same reason.
+  if (sc->_other_state_block._deps & Shader::D_vertex_data) {
+    uint32_t offset = sc->update_dynamic_uniforms(this, Shader::D_vertex_data);
+    if (offset != _current_dynamic_uniform_offset) {
+      _current_dynamic_uniform_offset = offset;
+      vkCmdBindDescriptorSets(_render_cmd, sc->_bind_point, sc->_pipeline_layout,
+                              DS_dynamic_uniforms, 1, &sc->_uniform_descriptor_set,
+                              1, &offset);
+    }
+  }
+
   // Prepare and bind the vertex buffers.
   size_t num_arrays = data_reader->get_num_arrays();
   size_t num_buffers = num_arrays + sc->_uses_vertex_color;
@@ -4471,13 +4515,12 @@ begin_draw_primitives(const GeomPipelineReader *geom_reader,
 
     default:
       // PT_none: the Geom has no single primitive type at the Geom level (e.g. a
-      // munged geom that did not propagate its primitive type).  With extended
-      // dynamic state the real topology is set per-primitive in
-      // do_draw_primitive_with_topology() via vkCmdSetPrimitiveTopology, so the
-      // up-front pipeline only needs a topology *class*.  Default to the triangle
-      // class rather than refusing to draw the geom (the GL backend likewise does
-      // not reject PT_none); a wrong class would only matter for points/lines,
-      // which the per-primitive draw path still sets correctly within the class.
+      // munged geom that did not propagate its primitive type, or a Geom mixing
+      // primitive classes).  Default to the triangle class rather than refusing
+      // to draw the geom (the GL backend likewise does not reject PT_none);
+      // do_draw_primitive_with_topology() rebinds a class-matching pipeline for
+      // any primitive whose topology class differs from the bound pipeline's
+      // (dynamic topology cannot cross classes).
       topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
       break;
     }
@@ -4486,6 +4529,7 @@ begin_draw_primitives(const GeomPipelineReader *geom_reader,
     nassertr(pipeline != VK_NULL_HANDLE, false);
     _vkCmdBindPipeline(_render_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     _render_cmd.flush_barriers();
+    _bound_topology_class = get_topology_class(topology);
   } else {
     _format = data_reader->get_format();
   }
@@ -4535,6 +4579,10 @@ begin_draw_primitives(const GeomPipelineReader *geom_reader,
     _vkCmdPushConstants(_render_cmd, sc->_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 64 + 16, 4, &anim_offset);
   }
   _instance_base = inst_offset;
+
+  // The render pass instance now has content that a compute-dispatch split
+  // must preserve (see dispatch_compute).
+  ++_render_pass_draw_count;
 
   return true;
 }
@@ -4592,17 +4640,21 @@ draw_patches(const GeomPrimitivePipelineReader *reader, bool force) {
   PStatGPUTimer timer(this, _draw_primitive_pcollector);
 
   uint32_t patch_control_points = ((const GeomPrimitive *)reader->get_object())->get_num_vertices_per_primitive();
-  if (_supports_extended_dynamic_state2_patch_control_points) {
-    // No need to set topology, there's no reason not to bake that into the
-    // pipeline for a pipeline with tessellation shaders.
-    _vkCmdSetPatchControlPointsEXT(_render_cmd, patch_control_points);
-  } else {
-    // Bind a pipeline which has both the topology and number of patch control
-    // points baked in.
+  if (!_supports_extended_dynamic_state2_patch_control_points ||
+      _bound_topology_class != TC_patch) {
+    // Bind a patch-class pipeline (with the control point count baked in when
+    // the dynamic patch-control-points state is unsupported).  Also needed
+    // when the bound pipeline is of a different topology class (PT_none geom).
     VkPipeline pipeline = _current_sc->get_pipeline(this, _state_rs, _format, VK_PRIMITIVE_TOPOLOGY_PATCH_LIST, patch_control_points, _fb_config, _instanced);
     nassertr(pipeline != VK_NULL_HANDLE, false);
     _vkCmdBindPipeline(_render_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     _render_cmd.flush_barriers();
+    _bound_topology_class = TC_patch;
+  }
+  if (_supports_extended_dynamic_state2_patch_control_points) {
+    // No need to set topology, there's no reason not to bake that into the
+    // pipeline for a pipeline with tessellation shaders.
+    _vkCmdSetPatchControlPointsEXT(_render_cmd, patch_control_points);
   }
 
   return do_draw_primitive(reader, force);
@@ -4645,9 +4697,11 @@ draw_linestrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
  */
 bool VulkanGraphicsStateGuardian::
 draw_points(const GeomPrimitivePipelineReader *reader, bool force) {
-  // For point-type primitives, there is only one choice of topology, so we set
-  // the pipeline only once in begin_draw_primitives.
-  return do_draw_primitive(reader, force);
+  // For point-type primitives there is only one choice of topology, and a
+  // point-class pipeline was normally already bound in begin_draw_primitives.
+  // Route through do_draw_primitive_with_topology anyway so a PT_none geom
+  // (which was bound with a triangle-class pipeline) rebinds a point pipeline.
+  return do_draw_primitive_with_topology(reader, force, VK_PRIMITIVE_TOPOLOGY_POINT_LIST, false);
 }
 
 /**
@@ -5063,19 +5117,53 @@ do_draw_primitive_with_topology(const GeomPrimitivePipelineReader *reader,
 
   PStatGPUTimer timer(this, _draw_primitive_pcollector);
 
-  if (_supports_extended_dynamic_state2) {
-    _vkCmdSetPrimitiveTopology(_render_cmd, topology);
-#ifndef __APPLE__
-    _vkCmdSetPrimitiveRestartEnable(_render_cmd, primitive_restart_enable && reader->is_indexed());
-#endif
-  } else {
+  TopologyClass cls = get_topology_class(topology);
+  if (!_supports_extended_dynamic_state2 || cls != _bound_topology_class) {
+    // Bind a pipeline of the right topology class: either dynamic topology is
+    // unsupported (topology fully baked into the pipeline), or the bound
+    // pipeline is of a different class, which vkCmdSetPrimitiveTopology may
+    // not cross (VUID-vkCmdDrawIndexed-dynamicPrimitiveTopologyUnrestricted-
+    // 07500) — this happens for PT_none geoms that mix primitive classes.
     VkPipeline pipeline = _current_sc->get_pipeline(this, _state_rs, _format, topology, 1, _fb_config, _instanced);
     nassertr(pipeline != VK_NULL_HANDLE, false);
     _vkCmdBindPipeline(_render_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     _render_cmd.flush_barriers();
+    _bound_topology_class = cls;
+  }
+  if (_supports_extended_dynamic_state2 && cls != TC_point) {
+    // Point-class pipelines bake their topology and are created without the
+    // dynamic topology / primitive restart states (see make_pipeline).
+    _vkCmdSetPrimitiveTopology(_render_cmd, topology);
+#ifndef __APPLE__
+    _vkCmdSetPrimitiveRestartEnable(_render_cmd, primitive_restart_enable && reader->is_indexed());
+#endif
   }
 
   return do_draw_primitive(reader, force);
+}
+
+/**
+ * Returns the topology class the given topology belongs to.
+ * vkCmdSetPrimitiveTopology may only switch topology within the class the
+ * bound pipeline was created with (this backend does not enable the
+ * dynamicPrimitiveTopologyUnrestricted feature, and Metal bakes the class into
+ * its pipeline states).
+ */
+VulkanGraphicsStateGuardian::TopologyClass VulkanGraphicsStateGuardian::
+get_topology_class(VkPrimitiveTopology topology) {
+  switch (topology) {
+  case VK_PRIMITIVE_TOPOLOGY_POINT_LIST:
+    return TC_point;
+  case VK_PRIMITIVE_TOPOLOGY_LINE_LIST:
+  case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP:
+  case VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY:
+  case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY:
+    return TC_line;
+  case VK_PRIMITIVE_TOPOLOGY_PATCH_LIST:
+    return TC_patch;
+  default:
+    return TC_triangle;
+  }
 }
 
 /**
@@ -5101,6 +5189,31 @@ do_draw_primitive(const GeomPrimitivePipelineReader *reader, bool force) {
     _vkCmdDraw(_render_cmd, num_vertices, _instance_count, reader->get_first_vertex(), _instance_base);
   }
   return true;
+}
+
+/**
+ * Fills a single VkViewport for one display region from its top-left-origin
+ * pixel rect and depth range.  When flip_y is set, the GL->Vulkan vertical flip
+ * is applied with a negative-height viewport (origin at the bottom edge), so NDC
+ * +1 maps to the top of the region.  Shared by prepare_display_region() and
+ * do_issue_depth_range(), which must stay in agreement or a depth-range
+ * respecification would undo the flip.  See prepare_display_region() for the
+ * rationale behind the flip and its gating.
+ */
+void VulkanGraphicsStateGuardian::
+fill_viewport(VkViewport &viewport, int x, int y, int w, int h,
+              PN_stdfloat min_depth, PN_stdfloat max_depth, bool flip_y) {
+  viewport.x = x;
+  viewport.width = w;
+  viewport.minDepth = min_depth;
+  viewport.maxDepth = max_depth;
+  if (flip_y) {
+    viewport.y = y + h;
+    viewport.height = -h;
+  } else {
+    viewport.y = y;
+    viewport.height = h;
+  }
 }
 
 /**
@@ -5148,17 +5261,7 @@ do_issue_depth_range(const DepthOffsetAttrib *target_depth_offset) {
   for (int i = 0; i < count; ++i) {
     int x, y, w, h;
     dr->get_region_pixels_i(i, x, y, w, h);
-    viewports[i].x = x;
-    viewports[i].width = w;
-    viewports[i].minDepth = min_value;
-    viewports[i].maxDepth = max_value;
-    if (flip_y) {
-      viewports[i].y = y + h;
-      viewports[i].height = -h;
-    } else {
-      viewports[i].y = y;
-      viewports[i].height = h;
-    }
+    fill_viewport(viewports[i], x, y, w, h, min_value, max_value, flip_y);
   }
 
   vkCmdSetViewport(_render_cmd, 0, count, viewports);
@@ -5754,19 +5857,28 @@ make_pipeline(VulkanShaderContext *sc,
 
     // Resolve the column this input reads from.  For a p3d_MultiTexCoord<n>
     // input, the shader binds it to the base texcoord InternalName ("texcoord")
-    // with the set index in _append_uv.  Many loaders (e.g. panda3d-gltf) name
-    // the per-set UV column "texcoord.<n>" rather than the bare "texcoord", so
-    // if the bare name isn't present, fall back to "texcoord.<n>".  This mirrors
-    // the GL backend, which remaps via the TextureStage's get_texcoord_name();
-    // here we resolve it from the set index directly so it stays consistent with
-    // the cached pipeline (which is not keyed on the texture state).
+    // with the set index in _append_uv.  Like the GL backend, resolve it via
+    // the n-th on-stage TextureStage's texcoord name when one carries a custom
+    // name -- the pipeline is keyed on the TextureAttrib in exactly that case
+    // (see get_pipeline).  Otherwise, many loaders (e.g. panda3d-gltf) name the
+    // per-set UV column "texcoord.<n>" rather than the bare "texcoord", so if
+    // the bare name isn't present, fall back to "texcoord.<n>".
     CPT(InternalName) lookup_name = input._name;
-    if (input._append_uv >= 0 && input._name == InternalName::get_texcoord() &&
-        !key._format->has_column(input._name)) {
-      CPT(InternalName) set_name =
-        InternalName::get_texcoord_name(format_string(input._append_uv));
-      if (key._format->has_column(set_name)) {
-        lookup_name = std::move(set_name);
+    if (input._append_uv >= 0 && input._name == InternalName::get_texcoord()) {
+      if (key._texture_attrib != nullptr &&
+          input._append_uv < key._texture_attrib->get_num_on_stages()) {
+        CPT(InternalName) stage_name = key._texture_attrib->
+          get_on_stage(input._append_uv)->get_texcoord_name();
+        if (key._format->has_column(stage_name)) {
+          lookup_name = std::move(stage_name);
+        }
+      }
+      if (lookup_name == input._name && !key._format->has_column(input._name)) {
+        CPT(InternalName) set_name =
+          InternalName::get_texcoord_name(format_string(input._append_uv));
+        if (key._format->has_column(set_name)) {
+          lookup_name = std::move(set_name);
+        }
       }
     }
 
@@ -6544,19 +6656,11 @@ update_global_descriptor_set() {
     _global_descriptor_set = VK_NULL_HANDLE;
   }
 
-  VkDescriptorSetAllocateInfo alloc_info;
-  alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  alloc_info.pNext = nullptr;
-  alloc_info.descriptorPool = _descriptor_pool;
-  alloc_info.descriptorSetCount = 1;
-  alloc_info.pSetLayouts = &_global_descriptor_set_layout;
-  VkResult
-  err = vkAllocateDescriptorSets(_device, &alloc_info, &_global_descriptor_set);
-  if (err) {
-    vulkan_error(err, "Failed to allocate descriptor set for globals");
+  if (!allocate_descriptor_set(_global_descriptor_set_layout,
+                               _global_descriptor_set,
+                               &_global_descriptor_set_pool)) {
     return false;
   }
-  _global_descriptor_set_pool = _descriptor_pool;
 
   uint32_t i = 0;
   VkWriteDescriptorSet write[1];
@@ -7034,26 +7138,21 @@ get_image_format(const Texture *texture) const {
 
   bool is_signed = !Texture::is_unsigned(component_type);
   bool is_srgb = Texture::is_srgb(format);
-  // A float render target (F_rgba16/F_rgb16/F_rg16/F_r16 + T_float) must map to
-  // the SFLOAT VkFormat, not UNORM/SNORM -- otherwise create_attachment's
-  // VkFormat->Texture::Format->VkFormat round-trip downgrades it.
-  //
-  // The same applies to GPU-generated storage images written by compute as
-  // image2D/image3D: the shader declares them rgba16f (SFLOAT), so the view
-  // format must match exactly or every load/store yields undefined values.
-  // Those images are NOT render-to-texture, so a render-to-texture-only gate
-  // would miss them.
-  //
-  // We therefore treat a float-component texture as SFLOAT when it is either a
-  // render target OR a GPU-initialized image (it has a clear color but no loaded
-  // pixel data).  Loaded textures with a float component type but normalized
-  // pixel data have no clear color and are not render targets, so they keep their
-  // existing UNORM/SNORM interpretation.  (has_clear_color() is set at
-  // construction, so unlike has_ram_image() it does not race a texture upload.)
+  // A float component type must map to the SFLOAT VkFormat, not UNORM/SNORM,
+  // in every case (matching the GL backend, which maps T_float/T_half_float
+  // unconditionally to the *16F/*32F internal formats):
+  //  - render targets (F_rgba16/F_rgb16/F_rg16/F_r16 + T_float), or
+  //    create_attachment's VkFormat->Texture::Format->VkFormat round-trip
+  //    downgrades them;
+  //  - GPU-generated storage images written by compute as image2D/image3D:
+  //    the shader declares them rgba16f (SFLOAT), so the view format must
+  //    match exactly or every load/store yields undefined values;
+  //  - CPU-provided float data (setup_texture + set_ram_image with T_float,
+  //    e.g. LUTs and heightfields): the RAM image bytes are IEEE floats, and
+  //    upload_texture memcpys them raw, so a UNORM view would reinterpret the
+  //    bit patterns as normalized integers.
   bool is_float = (component_type == Texture::T_float ||
-                   component_type == Texture::T_half_float)
-                  && (texture->get_render_to_texture() ||
-                      texture->has_clear_color());
+                   component_type == Texture::T_half_float);
 
   switch (compression) {
   case Texture::CM_on:

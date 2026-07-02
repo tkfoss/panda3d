@@ -95,6 +95,19 @@ get_storage_image_view(VkDevice device, int view, int mip, int layer) {
     base_layer += (uint32_t)layer;
   }
 
+  // A 3D image view must address the whole volume: baseArrayLayer must be 0
+  // (VUID-VkImageViewCreateInfo-subresourceRange-06725), and a 2D view of one
+  // z-slice requires the image to have been created 2D-view-compatible, which
+  // MoltenVK only supports with MTLHeap placement heaps enabled.  Rather than
+  // creating an invalid view, degrade to the full volume with a diagnostic.
+  bool degraded_3d_slice = false;
+  if (single_layer && get_texture()->get_texture_type() == Texture::TT_3d_texture) {
+    degraded_3d_slice = true;
+    single_layer = false;
+    base_layer = 0;
+    layer = -1;
+  }
+
   uint64_t key = ((uint64_t)(uint32_t)std::max(view, 0) << 40)
                | ((uint64_t)(uint32_t)mip << 20)
                | (uint64_t)(uint32_t)(layer + 1); // +1 so layer == -1 is distinct from 0
@@ -103,14 +116,26 @@ get_storage_image_view(VkDevice device, int view, int mip, int layer) {
     return it->second;
   }
 
+  if (degraded_3d_slice) {
+    vulkandisplay_cat.warning()
+      << "Binding a single z-slice of 3D texture " << get_texture()->get_name()
+      << " as a storage image is not supported by this backend; binding the "
+         "full volume instead (declare the shader image as image3D and use a "
+         "3D coordinate).\n";
+  }
+
   VkImageViewCreateInfo view_info;
   view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   view_info.pNext = nullptr;
   view_info.flags = 0;
   view_info.image = _image;
 
-  // A storage image is addressed as a non-arrayed 2D/3D/1D image when a single
-  // layer is selected; otherwise as the layered type matching the texture.
+  // A storage image is addressed as a non-arrayed 2D/1D image when a single
+  // layer is selected; otherwise as the layered type matching the texture, so
+  // the view's dimensionality matches the shader's image declaration (image1D,
+  // imageCube, image2DArray, ...).  This mapping must agree with the sampled
+  // view created in VulkanGraphicsStateGuardian::create_texture, except that a
+  // storage view must always use identity swizzles.
   switch (get_texture()->get_texture_type()) {
   case Texture::TT_1d_texture:
     view_info.viewType = VK_IMAGE_VIEW_TYPE_1D;
@@ -118,10 +143,21 @@ get_storage_image_view(VkDevice device, int view, int mip, int layer) {
   case Texture::TT_3d_texture:
     view_info.viewType = VK_IMAGE_VIEW_TYPE_3D;
     break;
-  case Texture::TT_2d_texture_array:
-  case Texture::TT_cube_map:
-  case Texture::TT_cube_map_array:
   case Texture::TT_1d_texture_array:
+    view_info.viewType = single_layer ? VK_IMAGE_VIEW_TYPE_1D
+                                      : VK_IMAGE_VIEW_TYPE_1D_ARRAY;
+    break;
+  case Texture::TT_cube_map:
+    // A single face is addressed as a 2D image; a layered binding must match
+    // an imageCube declaration.
+    view_info.viewType = single_layer ? VK_IMAGE_VIEW_TYPE_2D
+                                      : VK_IMAGE_VIEW_TYPE_CUBE;
+    break;
+  case Texture::TT_cube_map_array:
+    view_info.viewType = single_layer ? VK_IMAGE_VIEW_TYPE_2D
+                                      : VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+    break;
+  case Texture::TT_2d_texture_array:
     view_info.viewType = single_layer ? VK_IMAGE_VIEW_TYPE_2D
                                       : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     break;

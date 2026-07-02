@@ -31,6 +31,7 @@
 #include "small_vector.h"
 
 class VulkanGraphicsStateGuardian;
+class TextureAttrib;
 
 /**
  * Manages a set of Vulkan shader modules.
@@ -149,6 +150,14 @@ public:
     const ColorBlendAttrib *_color_blend_attrib = nullptr;
     const AlphaTestAttrib *_alpha_test_attrib = nullptr;
     const DepthBiasAttrib *_depth_bias_attrib = nullptr;
+
+    // Only set when the shader uses p3d_MultiTexCoord<n> AND an on-stage
+    // TextureStage carries a non-default texcoord name: the vertex-input
+    // layout then depends on the texture state (the column is resolved through
+    // TextureStage::get_texcoord_name(), as on the GL backend), so such
+    // pipelines must be keyed on it.  Null in every other case, so ordinary
+    // shaders pay nothing.
+    const TextureAttrib *_texture_attrib = nullptr;
   };
 
 private:
@@ -233,6 +242,11 @@ private:
     int _append_uv = -1;
   };
   pvector<VertexInput> _vertex_inputs;
+
+  // True if any vertex input has _append_uv >= 0 (p3d_MultiTexCoord<n>); only
+  // then can the vertex-input layout depend on the texture state (see
+  // PipelineKey::_texture_attrib).
+  bool _uses_append_uv = false;
 
   bool _uses_vertex_color = false;
 

@@ -74,6 +74,16 @@ public:
   unsigned int _expand_rgb_component_width = 0;
   bool _supports_render_to_texture = false;
 
+  // Sticky: set the first time this texture is actually bound as a storage
+  // image (image2D etc.).  Such dual-use images are thereafter sampled in
+  // VK_IMAGE_LAYOUT_GENERAL instead of SHADER_READ_ONLY_OPTIMAL, so the layout
+  // recorded in cached sampler descriptors stays valid across the compute writes
+  // (VUID 09600 / 01197).  Deliberately NOT guessed from texture properties at
+  // creation (has_clear_color etc.), which would demote innocent sampler-only
+  // clear-color textures like an empty environment cubemap.  Survives image
+  // recreation (it describes usage, not the VkImage).
+  bool _used_as_storage = false;
+
   // Just for debugging.  It's -1 if it's not a swapchain image.
   int _swapchain_index = -1;
 

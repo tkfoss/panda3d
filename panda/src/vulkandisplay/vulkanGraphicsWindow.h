@@ -71,6 +71,12 @@ private:
   // Synchronizes flip of previous frame with rendering.
   VkSemaphore _image_available = VK_NULL_HANDLE;
 
+  // Acquire semaphores retired by the swapchain-recreation paths.  They may
+  // still carry a pending presentation-engine signal (vkQueueWaitIdle cannot
+  // retire those), so instead of destroying them immediately they are handed
+  // to the next frame's VulkanFrameData for deferred destruction.
+  pvector<VkSemaphore> _retired_semaphores;
+
   LVecBase2i _swapchain_size;
   VkSurfaceFormatKHR _surface_format;
   VulkanFramebuffer _framebuffer;

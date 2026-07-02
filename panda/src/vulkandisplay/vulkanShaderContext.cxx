@@ -14,6 +14,8 @@
 #include "vulkanShaderContext.h"
 #include "vulkanBufferContext.h"
 #include "vulkanTextureContext.h"
+#include "textureAttrib.h"
+#include "textureStage.h"
 #include "spirVTransformer.h"
 #include "spirVConvertBoolToIntPass.h"
 #include "spirVHoistStructResourcesPass.h"
@@ -76,6 +78,9 @@ VulkanShaderContext(Shader *shader) :
       }
     }
     _vertex_inputs.push_back({bind._name, bind._id._location, false, null_format, scalar_type, bind._append_uv});
+    if (bind._append_uv >= 0) {
+      _uses_append_uv = true;
+    }
 
     int num_locations = bind._id._type->get_num_interface_locations();
     next_unused_location =
@@ -870,23 +875,26 @@ fetch_descriptor(VulkanGraphicsStateGuardian *gsg, const Descriptor &desc,
       int view = gsg->get_current_tex_view_offset();
       PT(Texture) texture = desc._binding->fetch_texture(state, id, sampler, view);
 
-      // Choose the sample layout.  A GPU-generated compute image (clear color
-      // but no loaded pixel data) is often ALSO bound as a storage image, so it
-      // ping-pongs GENERAL (compute write) <-> SHADER_READ_ONLY (sample).  A
-      // sampler descriptor recorded in READ_ONLY can then be consumed after a
+      // Choose the sample layout.  An image that has actually been bound as a
+      // storage image (tc->_used_as_storage, set on the storage-image bind path
+      // below) ping-pongs GENERAL (compute write) <-> SHADER_READ_ONLY (sample).
+      // A sampler descriptor recorded in READ_ONLY can then be consumed after a
       // later dispatch has put the image back in GENERAL, so the recorded layout
       // no longer matches the image's layout at execution (VUID-vkCmdDraw-None-
       // 09600 / VUID-VkImageMemoryBarrier2-oldLayout-01197).  GENERAL is a legal
-      // sample layout, so for these dual-use images sample in GENERAL and never
-      // transition to READ_ONLY, keeping the layout stable.  Scope:
-      // has_clear_color() && !get_render_to_texture(), which excludes raster
-      // render targets (also clear-colored, but transition COLOR_ATTACHMENT<->
-      // READ_ONLY normally) and ordinary loaded textures (no clear color).
-      VkImageLayout sample_layout =
-        (texture != nullptr && texture->has_clear_color() &&
-         !texture->get_render_to_texture())
-          ? VK_IMAGE_LAYOUT_GENERAL
-          : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      // sample layout, so such dual-use images sample in GENERAL and never
+      // transition to READ_ONLY, keeping the layout stable.  The flag is only set
+      // once a real storage bind has occurred (not guessed from texture
+      // properties), so ordinary clear-color sampler textures -- e.g. an empty
+      // fallback environment cubemap -- keep sampling in READ_ONLY_OPTIMAL.
+      VkImageLayout sample_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      if (texture != nullptr) {
+        VulkanTextureContext *ptc;
+        DCAST_INTO_R(ptc, texture->prepare_now(pgo, gsg), false);
+        if (ptc != nullptr && ptc->_used_as_storage) {
+          sample_layout = VK_IMAGE_LAYOUT_GENERAL;
+        }
+      }
 
       VulkanTextureContext *tc;
       tc = gsg->use_texture(texture,
@@ -949,6 +957,11 @@ fetch_descriptor(VulkanGraphicsStateGuardian *gsg, const Descriptor &desc,
       VulkanTextureContext *tc;
       tc = gsg->use_texture(texture, VK_IMAGE_LAYOUT_GENERAL,
                             desc._pipeline_stage_mask, access_mask);
+      if (tc != nullptr) {
+        // Sticky: from now on this image is sampled in GENERAL, so cached
+        // sampler descriptors stay layout-correct across the storage writes.
+        tc->_used_as_storage = true;
+      }
 
       int view = gsg->get_current_tex_view_offset();
       if (desc._type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) {
@@ -1174,6 +1187,9 @@ clear_pipeline_cache() {
     if (key._depth_bias_attrib != nullptr) {
       unref_delete(key._depth_bias_attrib);
     }
+    if (key._texture_attrib != nullptr) {
+      unref_delete(key._texture_attrib);
+    }
   }
 
   _pipeline_map.clear();
@@ -1271,6 +1287,28 @@ get_pipeline(VulkanGraphicsStateGuardian *gsg, const RenderState *state,
     key._packed_state |= PipelineKey::PS_instanced_mask;
   }
 
+  if (_uses_append_uv) {
+    // The vertex columns of p3d_MultiTexCoord<n> inputs are resolved through
+    // the n-th on-stage TextureStage's texcoord name (as on the GL backend).
+    // Only when a stage carries a NON-default name does the vertex-input
+    // layout actually depend on the texture state; keying every texture combo
+    // would needlessly multiply pipelines, so key it only in that case.
+    const TextureAttrib *tex_attrib;
+    if (state->get_attrib(tex_attrib)) {
+      for (const VertexInput &input : _vertex_inputs) {
+        if (input._append_uv >= 0 &&
+            input._append_uv < tex_attrib->get_num_on_stages()) {
+          const InternalName *name =
+            tex_attrib->get_on_stage(input._append_uv)->get_texcoord_name();
+          if (name != InternalName::get_texcoord()) {
+            key._texture_attrib = tex_attrib;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   // Check the small inline cache first.
   for (size_t i = 0; i < pipeline_cache_size; ++i) {
     if (_pipeline_cache[i]._pipeline != VK_NULL_HANDLE && _pipeline_cache[i]._key == key) {
@@ -1298,6 +1336,9 @@ get_pipeline(VulkanGraphicsStateGuardian *gsg, const RenderState *state,
     }
     if (key._depth_bias_attrib != nullptr) {
       key._depth_bias_attrib->ref();
+    }
+    if (key._texture_attrib != nullptr) {
+      key._texture_attrib->ref();
     }
   } else {
     gsg->_pipeline_cache_main_hits_pcollector.add_level(1);

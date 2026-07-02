@@ -170,7 +170,7 @@ begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region,
         } else {
           depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         }
-        depth_attachment.storeOp = attach._store_op;
+        depth_attachment.storeOp = _preserve_on_suspend ? VK_ATTACHMENT_STORE_OP_STORE : attach._store_op;
         depth_attachment.imageView = view;
         depth_attachment.imageLayout = layout;
         depth_attachment.resolveMode = resolve_mode;
@@ -191,7 +191,7 @@ begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region,
         } else {
           stencil_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         }
-        stencil_attachment.storeOp = attach._store_op;
+        stencil_attachment.storeOp = _preserve_on_suspend ? VK_ATTACHMENT_STORE_OP_STORE : attach._store_op;
         stencil_attachment.imageView = view;
         stencil_attachment.imageLayout = layout;
         stencil_attachment.resolveMode = resolve_mode;
@@ -235,7 +235,7 @@ begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region,
       } else {
         color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       }
-      color_attachment.storeOp = attach._store_op;
+      color_attachment.storeOp = _preserve_on_suspend ? VK_ATTACHMENT_STORE_OP_STORE : attach._store_op;
       color_attachment.imageView = tc->get_image_view(0);
       color_attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
@@ -269,11 +269,17 @@ begin_rendering(VulkanGraphicsStateGuardian *vkgsg, DrawableRegion *region,
   vkgsg->_vkCmdBeginRendering(cmd, &render_info);
   vkgsg->_fb_config = _config_id;
 
-  // Record the active render pass so that dispatch_compute() can suspend and
-  // resume it (a compute dispatch is not allowed inside a dynamic render pass).
-  vkgsg->_in_render_pass = true;
+  // Record the active render pass so that dispatch_compute() can split and
+  // re-begin it (a compute dispatch is not allowed inside a dynamic render
+  // pass, nor between suspending/resuming instances).
   vkgsg->_render_pass_fb = this;
   vkgsg->_render_pass_region = region;
+  vkgsg->_render_pass_cumulative = cumulative;
+  if (!resume) {
+    // A fresh instance has no content yet; dispatch_compute() uses this to
+    // decide whether it can simply replay the clears when it splits the pass.
+    vkgsg->_render_pass_draw_count = 0;
+  }
   return true;
 }
 
@@ -286,7 +292,6 @@ void VulkanFramebuffer::
 end_rendering(VulkanGraphicsStateGuardian *vkgsg) {
   VulkanCommandBuffer &cmd = vkgsg->_render_cmd;
   vkgsg->_vkCmdEndRendering(cmd);
-  vkgsg->_in_render_pass = false;
   vkgsg->_render_pass_fb = nullptr;
   vkgsg->_render_pass_region = nullptr;
 

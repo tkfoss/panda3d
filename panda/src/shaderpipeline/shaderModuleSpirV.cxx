@@ -31,37 +31,6 @@ using Definition = SpirVResultDatabase::Definition;
 TypeHandle ShaderModuleSpirV::_type_handle;
 
 /**
- * Collects the uniform struct types declared by the variable with the given id
- * into the given map (a convenience for the GL back-end, which needs them to
- * assign stage-independent names to uniform struct types).
- *
- * Both the constructor's main parse loop and fillin() (the Bam/shader-cache load
- * path, which does not serialize _uniform_struct_types) route through this so the
- * map is byte-identical whether a module was freshly parsed or loaded from cache.
- * Any divergence reintroduces the GL "struct type mismatch between shaders"
- * linker error this exists to prevent, so the predicate here must match the
- * constructor exactly: skip builtins, skip empty (zero-interface-location)
- * types, and only harvest non-sampled-image UniformConstant aggregates.
- */
-static void
-collect_uniform_struct_types(const SpirVResultDatabase &db, uint32_t id,
-                             pmap<uint32_t, const ShaderType::Struct *> &result) {
-  const Definition &def = db.get_definition(id);
-  if (!def.is_variable() || def.is_builtin() || def._type == nullptr) {
-    return;
-  }
-  // Ignore empty structs/arrays (mirrors the constructor's num_locations guard).
-  if (def._type->get_num_interface_locations() == 0) {
-    return;
-  }
-  if (def._storage_class == spv::StorageClassUniformConstant &&
-      def._type->is_aggregate_type() &&
-      def._type->as_sampled_image() == nullptr) {
-    db.collect_nested_structs(result, def._type_id);
-  }
-}
-
-/**
  * Takes a stream of SPIR-V instructions, and processes it as follows:
  * - All the definitions are parsed out (requires debug info present)
  * - Makes sure that all the inputs have location indices assigned.
@@ -282,10 +251,8 @@ ShaderModuleSpirV(Stage stage, std::vector<uint32_t> words, const CompilerOption
         }
         else if (def._type->is_aggregate_type()) {
           // Store all the uniform struct types while we have them, as a
-          // convenience for the GL back-end, which may need them.  Routed through
-          // the shared helper so fillin() rebuilds a byte-identical map (at this
-          // point all the helper's guards are already known to hold).
-          collect_uniform_struct_types(db, id, _uniform_struct_types);
+          // convenience for the GL back-end, which may need them.
+          db.collect_nested_structs(_uniform_struct_types, def._type_id);
         }
 
         if (def.is_dynamically_indexed() &&
@@ -943,21 +910,6 @@ fillin(DatagramIterator &scan, BamReader *manager) {
   _source_filename = scan.get_string();
   _used_caps = (int)scan.get_uint64();
 
-  // Source-file dependencies (bam 6.47+).  ShaderModuleSpirV does not chain to
-  // ShaderModule::fillin (it inlines the base fields here), so this must be kept
-  // in sync with ShaderModule::write_datagram, which writes this block.
-  if (manager->get_file_minor_ver() >= 47) {
-    uint32_t num_source_files = scan.get_uint32();
-    _source_files.reserve(num_source_files);
-    for (uint32_t i = 0; i < num_source_files; ++i) {
-      SourceFile sf;
-      sf._pathname = scan.get_string();
-      sf._timestamp = (time_t)scan.get_int64();
-      sf._size = (std::streamsize)scan.get_int64();
-      _source_files.push_back(std::move(sf));
-    }
-  }
-
   uint32_t num_inputs = scan.get_uint32();
   _inputs.resize(num_inputs);
   for (uint32_t i = 0; i < num_inputs; ++i) {
@@ -1000,20 +952,4 @@ fillin(DatagramIterator &scan, BamReader *manager) {
   }
   _instructions = std::move(words);
   nassertv(_instructions.validate_header());
-
-  // _uniform_struct_types is not serialized to the Bam stream (it is a derived
-  // convenience map for the GL back-end).  If we don't rebuild it here, a module
-  // that arrives via the model/shader cache (i.e. through fillin() rather than
-  // the SPIR-V-parsing constructor) ends up with an EMPTY map.  The GL back-end's
-  // struct-renaming loop (see GLShaderContext::compile_spirv_to_glsl) then never
-  // assigns a stage-independent name to uniform struct types, so each stage keeps
-  // SPIRV-Cross's per-module default name (_12, _16, ...) and the GL linker
-  // rejects the program with "struct type mismatch between shaders".  Rebuild the
-  // map from the (already stripped) instruction stream so cached and freshly
-  // compiled modules behave identically.
-  SpirVTransformer transformer(_instructions);
-  const SpirVResultDatabase &db = transformer.get_db();
-  for (uint32_t id = 0; id < transformer.get_id_bound(); ++id) {
-    collect_uniform_struct_types(db, id, _uniform_struct_types);
-  }
 }

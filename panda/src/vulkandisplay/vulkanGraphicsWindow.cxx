@@ -101,7 +101,8 @@ begin_frame(FrameMode mode, Thread *current_thread) {
   if (vkgsg->needs_reset()) {
     vkQueueWaitIdle(vkgsg->_queue);
     if (_image_available != VK_NULL_HANDLE) {
-      vkDestroySemaphore(vkgsg->_device, _image_available, nullptr);
+      // May still carry a pending acquire signal (see _retired_semaphores).
+      _retired_semaphores.push_back(_image_available);
       _image_available = VK_NULL_HANDLE;
     }
     destroy_swapchain();
@@ -117,13 +118,15 @@ begin_frame(FrameMode mode, Thread *current_thread) {
     // Before destroying the old, make sure the queue is no longer rendering
     // anything to it.
     vkQueueWaitIdle(vkgsg->_queue);
-    // The previous end_flip() created _image_available and used it to acquire an
-    // image from the swapchain we are about to destroy.  create_swapchain() will
-    // overwrite _image_available with a fresh semaphore, so destroy the old one
-    // here or it leaks (one semaphore per resize), and its pending acquire is
-    // orphaned along with the old swapchain anyway.
+    // The previous end_flip() created _image_available and used it to acquire
+    // an image from the swapchain we are about to destroy.  create_swapchain()
+    // will overwrite _image_available with a fresh semaphore, so retire the old
+    // one here or it leaks (one semaphore per resize).  It cannot be destroyed
+    // immediately: its acquire signal operation may still be pending (e.g.
+    // after a VK_SUBOPTIMAL_KHR acquire), and vkQueueWaitIdle does not retire
+    // presentation-engine signal ops (VUID-vkDestroySemaphore-semaphore-01137).
     if (_image_available != VK_NULL_HANDLE) {
-      vkDestroySemaphore(vkgsg->_device, _image_available, nullptr);
+      _retired_semaphores.push_back(_image_available);
       _image_available = VK_NULL_HANDLE;
     }
     destroy_swapchain();
@@ -141,6 +144,17 @@ begin_frame(FrameMode mode, Thread *current_thread) {
 
   // Ownership of this was transferred to the VulkanFrameData.
   _image_available = VK_NULL_HANDLE;
+
+  // Now that a frame data exists, schedule the semaphores retired above for
+  // destruction once this frame retires — long after the old swapchain that
+  // owned their pending acquire signal is gone.
+  if (!_retired_semaphores.empty()) {
+    VulkanFrameData &frame_data = vkgsg->get_frame_data();
+    frame_data._pending_destroy_semaphores.insert(
+      frame_data._pending_destroy_semaphores.end(),
+      _retired_semaphores.begin(), _retired_semaphores.end());
+    _retired_semaphores.clear();
+  }
 
   copy_async_screenshot();
 
@@ -379,6 +393,14 @@ close_window() {
     // chain, then destroy it.
     vkQueueWaitIdle(vkgsg->_queue);
     destroy_swapchain();
+
+    // Any retired acquire semaphores that never got handed to a frame data can
+    // be destroyed now that the swapchain that owned their pending acquire
+    // signal is gone and the queue is idle.
+    for (VkSemaphore semaphore : _retired_semaphores) {
+      vkDestroySemaphore(vkgsg->_device, semaphore, nullptr);
+    }
+    _retired_semaphores.clear();
 
     _gsg.clear();
   }

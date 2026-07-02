@@ -106,6 +106,15 @@ public:
   uint32_t _config_id = 0;
 
   small_vector<Attachment, 2> _attachments;
+
+  // Set (sticky) the first time a compute dispatch splits a render pass on
+  // this target after content was drawn.  From then on begin_rendering()
+  // forces storeOp STORE on all attachments, so ending the pass around a
+  // dispatch and resuming it with LOAD ops preserves their contents even if
+  // their configured store op is DONT_CARE.  (The suspend/resume render pass
+  // mechanism cannot be used instead: the spec forbids action/synchronization
+  // commands between suspending and resuming instances.)
+  bool _preserve_on_suspend = false;
 };
 
 #include "vulkanFramebuffer.I"

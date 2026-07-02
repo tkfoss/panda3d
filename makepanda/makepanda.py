@@ -3286,6 +3286,8 @@ if GetTarget() == 'windows' and "VISUALSTUDIO" in SDK:
 # built/lib and the install_name_tool below fails ("can't open file")
 if GetTarget() == 'darwin' and not PkgSkip("VULKAN") and "VULKAN" in SDK:
     dylib = os.path.realpath(os.path.join(SDK["VULKAN"], "lib", "libMoltenVK.dylib"))
+    if not os.path.isfile(dylib):
+        exit("Couldn't find libMoltenVK.dylib in %s/lib.  Install it (e.g. `brew install molten-vk`) or set VULKAN_SDK appropriately." % (SDK["VULKAN"]))
     target = os.path.join(GetOutputDir(), "lib", "libMoltenVK.dylib")
     if NeedsBuild([target], [dylib]):
         CopyFile(target, dylib)
@@ -3299,12 +3301,41 @@ if GetTarget() == 'darwin' and not PkgSkip("VULKAN") and "VULKAN" in SDK:
 # @loader_path-relative install name so libp3vulkandisplay resolves it at runtime.
 if GetTarget() == 'darwin' and not PkgSkip("VULKAN") and "VULKAN" in SDK:
     dylib = os.path.realpath(os.path.join(SDK["VULKAN"], "lib", "libvulkan.dylib"))
+    if not os.path.isfile(dylib):
+        exit("Couldn't find libvulkan.dylib in %s/lib.  Install the Vulkan loader (e.g. `brew install vulkan-loader`) or set VULKAN_SDK appropriately." % (SDK["VULKAN"]))
     target = os.path.join(GetOutputDir(), "lib", "libvulkan.dylib")
     if NeedsBuild([target], [dylib]):
         CopyFile(target, dylib)
         oscmd('install_name_tool -id @loader_path/../lib/libvulkan.dylib ' + target)
         oscmd('codesign -f -s - ' + target)
         JustBuilt([target], [dylib])
+
+# Bundle a MoltenVK ICD manifest pointing at the bundled libMoltenVK.dylib, so
+# the bundled loader can discover the ICD without a Vulkan SDK install or a
+# VK_ICD_FILENAMES/VK_DRIVER_FILES override: the backend points VK_DRIVER_FILES
+# at this file at runtime when the loader has no other driver configuration
+# (see vulkanGraphicsPipe.cxx).  The api_version is taken from the SDK's own
+# manifest when available.
+if GetTarget() == 'darwin' and not PkgSkip("VULKAN") and "VULKAN" in SDK:
+    icd_api_version = "1.2.0"
+    for icd_src in (os.path.join(SDK["VULKAN"], "share", "vulkan", "icd.d", "MoltenVK_icd.json"),
+                    os.path.join(SDK["VULKAN"], "etc", "vulkan", "icd.d", "MoltenVK_icd.json")):
+        if os.path.isfile(icd_src):
+            match = re.search(r'"api_version"\s*:\s*"([0-9.]+)"', ReadFile(icd_src))
+            if match:
+                icd_api_version = match.group(1)
+            break
+    icd_manifest = (
+        '{\n'
+        '    "file_format_version": "1.0.0",\n'
+        '    "ICD": {\n'
+        '        "library_path": "../../../lib/libMoltenVK.dylib",\n'
+        '        "api_version": "%s",\n'
+        '        "is_portability_driver": true\n'
+        '    }\n'
+        '}\n' % (icd_api_version))
+    MakeDirectory(os.path.join(GetOutputDir(), "etc", "vulkan", "icd.d"), recursive=True)
+    ConditionalWriteFile(os.path.join(GetOutputDir(), "etc", "vulkan", "icd.d", "MoltenVK_icd.json"), icd_manifest)
 
 ########################################################################
 ##

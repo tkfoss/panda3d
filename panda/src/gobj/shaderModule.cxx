@@ -14,10 +14,6 @@
 #include "shaderModule.h"
 #include "virtualFile.h"
 #include "virtualFileSystem.h"
-#include "bamReader.h"
-#include "bamWriter.h"
-#include "datagram.h"
-#include "datagramIterator.h"
 
 TypeHandle ShaderModule::_type_handle;
 
@@ -150,16 +146,6 @@ write_datagram(BamWriter *manager, Datagram &dg) {
   dg.add_uint8((int)_stage);
   dg.add_string(_source_filename);
   dg.add_uint64(_used_caps);
-
-  // Source-file dependencies (bam 6.47+), so a module loaded from the disk cache
-  // can still detect that an included file (e.g. a generated config header) has
-  // changed and needs recompiling.  See check_source_modified().
-  dg.add_uint32((uint32_t)_source_files.size());
-  for (const SourceFile &sf : _source_files) {
-    dg.add_string(sf._pathname);
-    dg.add_int64((int64_t)sf._timestamp);
-    dg.add_int64((int64_t)sf._size);
-  }
 }
 
 /**
@@ -171,16 +157,4 @@ fillin(DatagramIterator &scan, BamReader *manager) {
   _stage = (Stage)scan.get_uint8();
   _source_filename = scan.get_string();
   _used_caps = (int)scan.get_uint64();
-
-  if (manager->get_file_minor_ver() >= 47) {
-    uint32_t num_source_files = scan.get_uint32();
-    _source_files.reserve(num_source_files);
-    for (uint32_t i = 0; i < num_source_files; ++i) {
-      SourceFile sf;
-      sf._pathname = scan.get_string();
-      sf._timestamp = (time_t)scan.get_int64();
-      sf._size = (std::streamsize)scan.get_int64();
-      _source_files.push_back(std::move(sf));
-    }
-  }
 }

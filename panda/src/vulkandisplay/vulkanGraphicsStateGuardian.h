@@ -189,6 +189,10 @@ private:
 
   void do_issue_depth_range(const DepthOffsetAttrib *target_depth_offset);
 
+  static void fill_viewport(VkViewport &viewport, int x, int y, int w, int h,
+                            PN_stdfloat min_depth, PN_stdfloat max_depth,
+                            bool flip_y);
+
 public:
   bool create_buffer(VkDeviceSize size, VkBuffer &buffer, VulkanMemoryBlock &block,
                      int usage_flags, VkMemoryPropertyFlagBits flags);
@@ -339,11 +343,32 @@ private:
   uint32_t _fb_config = 0;
   pvector<FbConfig> _fb_configs;
 
-  // Tracks the active dynamic render pass so dispatch_compute() can suspend it
-  // (a compute dispatch must not be recorded inside vkCmdBeginRendering).
-  bool _in_render_pass = false;
+  // Tracks the active dynamic render pass (non-null _render_pass_fb) so that
+  // dispatch_compute() can split it (a compute dispatch must not be recorded
+  // inside vkCmdBeginRendering).  _render_pass_draw_count counts the draws and
+  // explicit clears recorded in the current instance: if it is still zero when
+  // a dispatch splits the pass, the re-begun instance can simply replay the
+  // clears instead of loading stored contents.
   VulkanFramebuffer *_render_pass_fb = nullptr;
   DrawableRegion *_render_pass_region = nullptr;
+  bool _render_pass_cumulative = false;
+  uint32_t _render_pass_draw_count = 0;
+
+  // Topology class of the graphics pipeline currently bound by
+  // begin_draw_primitives / do_draw_primitive_with_topology / draw_patches.
+  // Dynamic primitive topology may only switch topology *within* the class the
+  // pipeline was created with (the dynamicPrimitiveTopologyUnrestricted
+  // feature is not enabled, and Metal bakes the class into its pipelines), so
+  // a draw of a different class must bind a class-matching pipeline.
+  enum TopologyClass {
+    TC_unknown,
+    TC_point,
+    TC_line,
+    TC_triangle,
+    TC_patch,
+  };
+  static TopologyClass get_topology_class(VkPrimitiveTopology topology);
+  TopologyClass _bound_topology_class = TC_unknown;
 
   // Current depth range as applied by DepthOffsetAttrib
   CPT(DepthOffsetAttrib) _current_depth_range_attrib;

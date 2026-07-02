@@ -17,6 +17,7 @@
 #include "pandaVersion.h"
 #include "displayInformation.h"
 #include "small_vector.h"
+#include "executionEnvironment.h"
 
 /**
  * Callback called by the VK_EXT_debug_utils extension whenever one of the
@@ -46,6 +47,38 @@ static VkBool32 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT flags, VkD
 
 TypeHandle VulkanGraphicsPipe::_type_handle;
 
+#ifdef __APPLE__
+/**
+ * If the Vulkan loader has been given no driver search configuration, point it
+ * at the MoltenVK ICD manifest bundled alongside the Panda3D libraries
+ * (etc/vulkan/icd.d/MoltenVK_icd.json, written by makepanda), so that a Panda
+ * build or a deployed application works without a Vulkan SDK or Homebrew
+ * install.  An explicit VK_DRIVER_FILES / VK_ICD_FILENAMES always takes
+ * precedence.  Must run before the first loader call, which is when the
+ * loader scans for ICDs.
+ */
+static void
+maybe_use_bundled_icd() {
+  if (getenv("VK_DRIVER_FILES") != nullptr ||
+      getenv("VK_ICD_FILENAMES") != nullptr) {
+    return;
+  }
+
+  Filename dtool_name = Filename::from_os_specific(
+    ExecutionEnvironment::get_dtool_name());
+  Filename manifest(dtool_name.get_dirname(),
+                    "../etc/vulkan/icd.d/MoltenVK_icd.json");
+  if (manifest.is_regular_file()) {
+    std::string os_path = manifest.to_os_specific();
+    setenv("VK_DRIVER_FILES", os_path.c_str(), 0);
+    if (vulkandisplay_cat.is_debug()) {
+      vulkandisplay_cat.debug()
+        << "Using bundled MoltenVK ICD manifest: " << os_path << "\n";
+    }
+  }
+}
+#endif  // __APPLE__
+
 /**
  * Creates a Vulkan instance and picks a GPU to use.
  */
@@ -54,6 +87,10 @@ VulkanGraphicsPipe() : _max_allocation_size(0) {
   _is_valid = false;
   _has_surface_ext = false;
   _vkSetDebugUtilsObjectName = nullptr;
+
+#ifdef __APPLE__
+  maybe_use_bundled_icd();
+#endif
 
   // Get the API version number for instance-level functionality.
   uint32_t inst_version = VK_API_VERSION_1_0;
