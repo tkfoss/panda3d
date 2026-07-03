@@ -1,0 +1,620 @@
+<rml>
+<head>
+    <link type="text/template" href="window.rml"/>
+    <link type="text/rcss" href="features.rcss"/>
+    <title>RmlUi Feature Showcase</title>
+</head>
+<body template="window">
+
+<tabset id="tabs">
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Welcome</tab>
+<panel id="welcome">
+    <h1 class="panel-title">Panda3D + RmlUi</h1>
+
+    <p class="intro">
+        This sample demonstrates the <strong>panda3d.rmlui</strong> module — a full
+        RmlUi v6 integration for Panda3D. Browse the tabs above to see each feature
+        area in action.
+    </p>
+
+    <div class="source-guide">
+        <h2>Reading the source</h2>
+        <p>Each tab below corresponds to a section in <code>features.rml</code> and
+        <code>features.rcss</code>. The Python driver is <code>main.py</code>.</p>
+
+        <table class="guide-table">
+            <tr><td class="tab-name">Font &amp; Text</td>
+                <td>Pure RCSS <code>font-effect:</code> — glow, outline, shadow, blur.
+                No Python needed; look for the <code>.fx-*</code> rules in features.rcss.</td></tr>
+            <tr><td class="tab-name">Animations</td>
+                <td>RCSS <code>@keyframes</code> cube, <code>transition:</code> on :hover.
+                The tweening showcase is also pure RCSS using the <code>animation:</code>
+                shorthand with named easing functions.</td></tr>
+            <tr><td class="tab-name">Decorators</td>
+                <td>Gradient, tiled-box, image fit/align modes, spritesheet sprites.
+                All rendered by the <code>decorator:</code> RCSS property.
+                Sprites defined in <code>invader.rcss</code> <code>@spritesheet</code>.</td></tr>
+            <tr><td class="tab-name">Transforms</td>
+                <td>CSS <code>transform:</code> — translate, rotate, scale, skew,
+                and full 3D with <code>perspective:</code>. Combined with
+                <code>transition:</code> on :hover and <code>@keyframes</code>
+                for continuous animations.</td></tr>
+            <tr><td class="tab-name">Filters</td>
+                <td>CSS <code>filter:</code> — blur, grayscale, sepia, brightness, contrast,
+                invert, hue-rotate, saturate, opacity, drop-shadow. Each filter triggers
+                the RmlUi layer stack (<code>PushLayer</code> / <code>CompositeLayers</code> /
+                <code>PopLayer</code>) and is rendered via a Panda3D offscreen buffer + GLSL shader.</td></tr>
+            <tr><td class="tab-name">Forms</td>
+                <td>All built-in input types. The <strong>Submit</strong> button fires a
+                Python callback via <code>RmlElement.add_event_listener()</code>.
+                See <code>_on_form_submit()</code> in main.py.</td></tr>
+            <tr><td class="tab-name">Live / Python</td>
+                <td>Every frame, main.py calls <code>RmlElement.set_inner_rml()</code>
+                and <code>set_attribute("style", …)</code> to push data into the DOM.
+                See <code>_update()</code> in main.py.</td></tr>
+            <tr><td class="tab-name">DOM API</td>
+                <td>Live demo of the Python-side DOM API:
+                geometry queries (<code>get_absolute_offset</code>, <code>offset_width/height</code>),
+                attribute / style / pseudo-class methods,
+                DOM traversal (<code>query_selector</code>, <code>get_child</code>, <code>num_children</code>),
+                programmatic <code>create_element</code> / <code>append_child</code> / <code>remove_child</code>,
+                context queries (<code>is_mouse_interacting</code>, <code>get_hover_element</code>,
+                <code>get_focus_element</code>), and <code>scroll_into_view</code>.</td></tr>
+            <tr><td class="tab-name">Data Binding</td>
+                <td>See <code>03_data_binding.py</code> — <code>bind_func()</code>
+                for scalars (data-if, {{ }} templates), <code>bind_list()</code> for
+                <code>data-for</code> list rendering, and
+                <code>dirty_variable()</code> to trigger re-evaluation.</td></tr>
+        </table>
+
+        <p class="hint">Press <strong>F1</strong> to open the RmlUi debugger — hover
+        any element to inspect its box model, computed style, and the element tree.</p>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Font &amp; Text</tab>
+<panel id="font-text">
+    <h1 class="panel-title">Font Effects &amp; Text</h1>
+
+    <!-- RCSS: font-effect property -->
+    <div class="demo-row">
+        <div class="demo-cell">
+            <h2>font-effect: glow()</h2>
+            <p class="big fx-glow">Glowing text</p>
+            <p class="big fx-glow-sharp">Sharper glow</p>
+            <p class="big fx-glow-wide">Wide soft glow</p>
+        </div>
+        <div class="demo-cell">
+            <h2>font-effect: outline()</h2>
+            <p class="big fx-outline-sm">Thin outline</p>
+            <p class="big fx-outline-lg">Thick outline</p>
+        </div>
+    </div>
+    <div class="demo-row">
+        <div class="demo-cell">
+            <h2>font-effect: shadow()</h2>
+            <p class="big fx-shadow-up">Shadow up</p>
+            <p class="big fx-shadow-down">Shadow down</p>
+        </div>
+        <div class="demo-cell">
+            <h2>font-effect: blur()</h2>
+            <p class="big fx-blur-sm">Soft blur</p>
+            <p class="big fx-blur-lg">Heavy blur</p>
+        </div>
+    </div>
+
+    <!-- Emoji and unicode -->
+    <div class="demo-row">
+        <div class="demo-cell wide">
+            <h2>Emoji &amp; Unicode (built-in font engine)</h2>
+            <p class="big">😍 🎉 🚀 🌐 💡 ✅ ⚠️ 🔥</p>
+            <p>RmlUi renders emoji via the built-in FreeType font engine.
+               No extra configuration needed — just load a font that contains them.</p>
+        </div>
+    </div>
+
+    <!-- text-align / font-size -->
+    <div class="demo-row">
+        <div class="demo-cell wide">
+            <h2>Font sizes &amp; alignment</h2>
+            <p style="font-size: 10dp; text-align: left;">10dp left-aligned</p>
+            <p style="font-size: 16dp; text-align: center;">16dp centered</p>
+            <p style="font-size: 24dp; text-align: right; font-weight: bold;">24dp bold right</p>
+            <p style="font-size: 30dp; font-style: italic; color: #adf;">30dp italic colored</p>
+        </div>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Animations</tab>
+<panel id="animations">
+    <h1 class="panel-title">CSS Animations &amp; Transitions</h1>
+
+    <div class="demo-row">
+        <!-- @keyframes 3D cube -->
+        <div class="demo-cell">
+            <h2>@keyframes — 3D spinning cube</h2>
+            <p>Entire rotation is driven by <code>animation: 3s cube-spin infinite linear</code>
+               in RCSS. The six faces each have a <code>transform: rotate…translateZ()</code>.</p>
+            <div class="cube-wrap">
+                <div class="cube">
+                    <div class="face back">6</div>
+                    <div class="face top">5</div>
+                    <div class="face left">4</div>
+                    <div class="face bottom">3</div>
+                    <div class="face right">2</div>
+                    <div class="face front">1</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- :hover transitions -->
+        <div class="demo-cell">
+            <h2>transition: on :hover</h2>
+            <p>Hover each box. The <code>transition:</code> property specifies
+               which properties animate and with which easing function.</p>
+
+            <div class="tbox tbox-back-out">
+                <img src="high_scores_alien_1.tga" class="tbox-img"/>
+                back-out easing
+            </div>
+            <div class="tbox tbox-elastic">
+                <img src="high_scores_alien_2.tga" class="tbox-img"/>
+                elastic-out easing
+            </div>
+            <div class="tbox tbox-bounce">
+                <img src="high_scores_defender.tga" class="tbox-img"/>
+                bounce-out easing
+            </div>
+            <div class="tbox tbox-cubic">cubic-out — hover: background colour</div>
+        </div>
+    </div>
+
+    <!-- Easing gallery — @keyframes with different named easings -->
+    <div class="demo-row">
+        <div class="demo-cell wide">
+            <h2>Easing function gallery (all via RCSS animation: shorthand)</h2>
+            <p>Each bar uses the same <code>@keyframes slide</code> but a different
+               easing name in the <code>animation:</code> shorthand. The animation
+               loops with <code>alternate</code> direction so you can see both in/out.</p>
+            <div class="ease-row"><span class="ease-label">linear</span>
+                <div class="ease-bar ease-linear"/></div>
+            <div class="ease-row"><span class="ease-label">cubic-in-out</span>
+                <div class="ease-bar ease-cubic"/></div>
+            <div class="ease-row"><span class="ease-label">back-in-out</span>
+                <div class="ease-bar ease-back"/></div>
+            <div class="ease-row"><span class="ease-label">elastic-in-out</span>
+                <div class="ease-bar ease-elastic"/></div>
+            <div class="ease-row"><span class="ease-label">bounce-in-out</span>
+                <div class="ease-bar ease-bounce"/></div>
+            <div class="ease-row"><span class="ease-label">sine-in-out</span>
+                <div class="ease-bar ease-sine"/></div>
+            <div class="ease-row"><span class="ease-label">exponential-in-out</span>
+                <div class="ease-bar ease-expo"/></div>
+        </div>
+    </div>
+
+    <!-- Extra animation demos from standalone animation sample -->
+    <div class="demo-row">
+        <div class="demo-cell">
+            <h2>Animated text-align (@keyframes)</h2>
+            <p>RCSS can animate <code>text-align</code> between left / center / right.</p>
+            <div class="textalign">← text-align animates →</div>
+        </div>
+        <div class="demo-cell">
+            <h2>Opacity fade + complex transform</h2>
+            <p>Two circles fading in/out with <code>alternate</code>. Below: multi-step
+               <code>@keyframes hello-world</code> with <code>:hover</code> colour.</p>
+            <div class="fade-box fadein"/>
+            <div class="fade-box fadeout"/>
+            <div class="kf-test">hover me</div>
+            <div class="kf-test elastic">hover me too</div>
+        </div>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Decorators</tab>
+<panel id="decorators">
+    <h1 class="panel-title">Decorators &amp; Images</h1>
+
+    <div class="demo-row">
+        <div class="demo-cell">
+            <h2>Gradient decorator</h2>
+            <div class="grad-h">horizontal-gradient</div>
+            <div class="grad-v">vertical-gradient</div>
+            <div class="grad-diag">horizontal-gradient (dark→purple)</div>
+        </div>
+        <div class="demo-cell">
+            <h2>Tiled-box decorator</h2>
+            <p>Corners stay fixed; edges and centre stretch.
+               The invader spritesheet window tiles are used here.</p>
+            <div class="tiled-win"/>
+            <div class="tiled-win" style="width: 180dp; height: 60dp;"/>
+        </div>
+    </div>
+
+    <div class="demo-row">
+        <div class="demo-cell">
+            <h2>Spritesheet icons (<code>@spritesheet</code>)</h2>
+            <p>Sprites declared once in <code>invader.rcss</code>, referenced by name
+               everywhere — in <code>img sprite=""</code> and <code>decorator: image(name)</code>.</p>
+            <div class="sprite-row">
+                <img sprite="icon-invader"/>
+                <img sprite="icon-game"/>
+                <img sprite="icon-hiscore"/>
+                <img sprite="icon-waves"/>
+                <img sprite="icon-flag"/>
+                <img sprite="icon-lives"/>
+                <img sprite="icon-score"/>
+            </div>
+        </div>
+        <div class="demo-cell">
+            <h2>Image tinting (<code>image-color</code>)</h2>
+            <div class="sprite-row">
+                <img src="high_scores_alien_1.tga" style="image-color: #f88;"/>
+                <img src="high_scores_alien_1.tga" style="image-color: #8f8;"/>
+                <img src="high_scores_alien_1.tga" style="image-color: #88f;"/>
+                <img src="high_scores_alien_1.tga" style="image-color: #ff0;"/>
+                <img src="high_scores_alien_1.tga" style="image-color: #f0f;"/>
+            </div>
+            <h2>image-color on :hover transition</h2>
+            <div class="tint-hover">
+                <img src="high_scores_defender.tga" class="tint-img"/>
+                Hover to tint
+            </div>
+        </div>
+    </div>
+
+    <div class="demo-row">
+        <div class="demo-cell wide">
+            <h2>Image decorator fit modes</h2>
+            <p>The <code>decorator: image(sprite fit-mode)</code> controls how the
+               image fills the element. All boxes use the same invader icon.</p>
+            <div class="fit-row">
+                <div class="fit-box fit-fill"><p>fill</p></div>
+                <div class="fit-box fit-contain"><p>contain</p></div>
+                <div class="fit-box fit-cover"><p>cover</p></div>
+                <div class="fit-box fit-scale-none"><p>scale-none</p></div>
+                <div class="fit-box fit-scale-down"><p>scale-down</p></div>
+                <div class="fit-box fit-repeat"><p>repeat</p></div>
+                <div class="fit-box fit-flip-h"><p>flip-horizontal</p></div>
+            </div>
+        </div>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Transforms</tab>
+<panel id="transforms">
+    <h1 class="panel-title">CSS 3D Transforms</h1>
+    <p>RmlUi supports the full CSS transform stack: translate, rotate, scale,
+       skew, matrix, and 3D variants. Perspective is set on the parent.
+       Transforms also work on transitions and @keyframes.</p>
+
+    <div class="demo-row">
+        <div class="demo-cell">
+            <h2>translate / rotate / scale</h2>
+            <div class="xform-stage">
+                <div class="xform-box xf-translate">translateX(40dp)</div>
+                <div class="xform-box xf-rotate">rotate(15deg)</div>
+                <div class="xform-box xf-scale">scale(1.4)</div>
+                <div class="xform-box xf-skew">skew(-10deg, 5deg)</div>
+            </div>
+        </div>
+        <div class="demo-cell">
+            <h2>3D perspective + rotateY</h2>
+            <div class="xform-stage perspective-stage">
+                <div class="xform-box xf-rotatey">rotateY(35deg)</div>
+                <div class="xform-box xf-rotate3d">rotate3d(1,1,0,25deg)</div>
+                <div class="xform-box xf-translatez">translateZ(-30dp)</div>
+            </div>
+            <p style="font-size: 14dp; color: #b8c8d8; margin-top: 8dp;">
+                perspective set on parent via <code>perspective: 500dp</code>
+            </p>
+        </div>
+    </div>
+
+    <div class="demo-row">
+        <div class="demo-cell">
+            <h2>transform on :hover (transition)</h2>
+            <p>Hover the boxes. <code>transition: transform 0.4s back-out</code>
+               is set in RCSS; the transform value changes on :hover.</p>
+            <div class="xform-box xf-hover-scale">Hover: scale</div>
+            <div class="xform-box xf-hover-rotate">Hover: rotate</div>
+            <div class="xform-box xf-hover-tilt">Hover: 3D tilt</div>
+        </div>
+        <div class="demo-cell">
+            <h2>@keyframes transform animations</h2>
+            <p>All running simultaneously, each with a different keyframe
+               definition and easing.</p>
+            <div class="xform-box anim-spin">spin (linear)</div>
+            <div class="xform-box anim-pulse">pulse scale (sine)</div>
+            <div class="xform-box anim-wobble">wobble rotate (elastic)</div>
+        </div>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Forms</tab>
+<panel id="forms">
+    <h1 class="panel-title">Form Elements</h1>
+    <p>All standard input types are built into RmlUi. The <strong>Submit</strong> button
+       calls a Python callback via <code>add_event_listener("submit", fn)</code>
+       registered in main.py — no scripting plugin required.</p>
+
+    <form id="demo-form">
+        <div class="form-row">
+            <div class="form-col">
+                <h2>Text &amp; Password</h2>
+                <input type="text" name="name" placeholder="Your name" class="wide-input"/>
+                <input type="password" name="pass" placeholder="Password" class="wide-input"/>
+
+                <h2>Textarea</h2>
+                <textarea name="msg" cols="28" rows="3" placeholder="Your message…">😍 Hello RmlUi!</textarea>
+
+                <h2>Range slider</h2>
+                <p>Speed: <span id="speed-label">50</span>%</p>
+                <input type="range" id="speed-slider" name="speed" min="0" max="100"
+                       step="1" value="50"/>
+
+                <h2>Select</h2>
+                <select name="planet">
+                    <option value="mercury">Mercury</option>
+                    <option value="venus">Venus</option>
+                    <option value="earth" selected>Earth</option>
+                    <option value="mars">Mars</option>
+                    <option value="jupiter">Jupiter</option>
+                </select>
+            </div>
+
+            <div class="form-col">
+                <h2>Radio buttons</h2>
+                <label><input type="radio" name="animal" value="dog" checked/> Dog</label>
+                <label><input type="radio" name="animal" value="cat"/> Cat</label>
+                <label><input type="radio" name="animal" value="narwhal"/> Narwhal</label>
+
+                <h2>Checkboxes</h2>
+                <label><input type="checkbox" name="opts" value="glow" checked/> Glow effect</label>
+                <label><input type="checkbox" name="opts" value="spin" checked/> Spin cube</label>
+                <label><input type="checkbox" name="opts" value="debug"/> Debug mode</label>
+
+                <h2>Navigation (Tab key)</h2>
+                <p style="font-size: 14dp; color: #b8c8d8;">
+                    Tab moves focus between inputs. RmlUi handles focus ring and
+                    keyboard navigation automatically for all form elements.
+                </p>
+                <button id="submit-btn" type="submit">Submit form</button>
+            </div>
+        </div>
+    </form>
+
+    <div id="form-output">
+        <p style="color: #b8c8d8;">Form output appears here after submit.</p>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Filters</tab>
+<panel id="filters">
+    <h1 class="panel-title">CSS Filters (Layer Stack)</h1>
+    <p>Each box applies a <code>filter:</code> property rendered via the RmlUi layer stack
+       (<code>PushLayer</code> / <code>CompositeLayers</code> / <code>PopLayer</code>)
+       — Panda3D offscreen buffers + GLSL shaders, no raw GL calls.</p>
+
+    <div class="filter-grid">
+        <div class="filter-card">
+            <div class="filter-target f-blur">Blur</div>
+            <span class="filter-label">blur(4dp)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-grayscale">Gray</div>
+            <span class="filter-label">grayscale(1)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-sepia">Sepia</div>
+            <span class="filter-label">sepia(0.9)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-brightness">Bright</div>
+            <span class="filter-label">brightness(1.8)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-contrast">Contrast</div>
+            <span class="filter-label">contrast(2.0)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-invert">Invert</div>
+            <span class="filter-label">invert(1)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-hue60">Hue +60</div>
+            <span class="filter-label">hue-rotate(60deg)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-hue180">Hue 180</div>
+            <span class="filter-label">hue-rotate(180deg)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-saturate">Saturate</div>
+            <span class="filter-label">saturate(3.0)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-opacity">Opacity</div>
+            <span class="filter-label">opacity(0.4)</span>
+        </div>
+        <div class="filter-card">
+            <div class="filter-target f-shadow">Shadow</div>
+            <span class="filter-label">drop-shadow(3dp 4dp 2dp)</span>
+        </div>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>Live / Python</tab>
+<panel id="live">
+    <h1 class="panel-title">Python-Driven Live Updates</h1>
+    <p>Every frame <code>main.py</code> calls <code>RmlElement.set_inner_rml()</code>
+       and <code>set_attribute("style", …)</code> to push values into the DOM.
+       No data-binding plugin is needed — just direct DOM manipulation.</p>
+
+    <div class="demo-row">
+        <div class="demo-cell">
+            <h2>Per-frame counters</h2>
+            <p>FPS: <span id="fps" class="live-val">--</span></p>
+            <p>Frame: <span id="frame-count" class="live-val">0</span></p>
+            <p>Time: <span id="time-val" class="live-val">0.00</span> s</p>
+
+            <h2>Sin-wave progress bar</h2>
+            <p>Value: <span id="sin-val" class="live-val">0.000</span></p>
+            <div class="progress-outer">
+                <div id="progress-fill" class="progress-fill"/>
+            </div>
+
+            <h2>Cycling HSV color swatch</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                Python converts frame time → HSV → RGB →
+                <code>set_attribute("style", "background-color: rgb(…)")</code>
+            </p>
+            <div id="color-swatch" class="color-swatch"/>
+        </div>
+
+        <div class="demo-cell">
+            <h2>Event bridge: DOM → Python callback</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                In main.py:<br/>
+                <code>btn.add_event_listener("click", self._on_ping)</code><br/>
+                <code>def _on_ping(self, ev): ...</code>
+            </p>
+            <button id="ping-btn">Ping!</button>
+            <p>Pings received: <span id="ping-count" class="live-val">0</span></p>
+
+            <h2>DOM element manipulation</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                Click the squares — Python toggles a CSS class via
+                <code>set_class(name, activate)</code>.
+            </p>
+            <div id="toggle-row">
+                <div class="toggle-box" id="tog0">A</div>
+                <div class="toggle-box" id="tog1">B</div>
+                <div class="toggle-box" id="tog2">C</div>
+                <div class="toggle-box" id="tog3">D</div>
+            </div>
+            <p id="toggle-status" style="font-size: 14dp; color: #b8c8d8;">click a square</p>
+        </div>
+    </div>
+</panel>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<tab>DOM API</tab>
+<panel id="domapi">
+    <h1 class="panel-title">Python DOM API</h1>
+    <p>All methods added in this session are exercised live from Python.
+       See <code>_setup_domapi()</code> and <code>_update_domapi()</code> in main.py.</p>
+
+    <div class="demo-row">
+        <!-- Geometry queries -->
+        <div class="demo-cell">
+            <h2>Geometry queries (A1)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>get_relative_offset()</code> <code>get_absolute_offset()</code><br/>
+                <code>offset_width</code> <code>offset_height</code>
+            </p>
+            <div id="geo-target" class="api-box">Measured box</div>
+            <p>Relative: <span id="geo-rel" class="live-val">--</span></p>
+            <p>Absolute: <span id="geo-abs" class="live-val">--</span></p>
+            <p>Size: <span id="geo-size" class="live-val">--</span></p>
+        </div>
+
+        <!-- Attribute / style / pseudo-class -->
+        <div class="demo-cell">
+            <h2>Attributes &amp; Style (A2, A3, A4)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>has_attribute</code> <code>remove_attribute</code><br/>
+                <code>set_property</code> <code>remove_property</code><br/>
+                <code>is_pseudo_class_set</code>
+            </p>
+            <div id="attr-target" class="api-box" data-demo="yes">Hover me</div>
+            <p>has data-demo: <span id="attr-has" class="live-val">--</span></p>
+            <p>:hover active: <span id="attr-hover" class="live-val">--</span></p>
+            <button id="attr-flash-btn">Flash colour</button>
+        </div>
+    </div>
+
+    <div class="demo-row">
+        <!-- DOM traversal -->
+        <div class="demo-cell">
+            <h2>DOM traversal (A6, A7)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>query_selector</code> <code>get_parent_node</code><br/>
+                <code>get_child</code> <code>num_children</code>
+            </p>
+            <div id="traverse-root" class="api-box">
+                <span class="tspan">Child A</span>
+                <span class="tspan">Child B</span>
+                <span class="tspan">Child C</span>
+            </div>
+            <p>Children: <span id="trav-count" class="live-val">--</span></p>
+            <p>query_selector(.tspan): <span id="trav-qs" class="live-val">--</span></p>
+            <p>Parent id: <span id="trav-parent" class="live-val">--</span></p>
+        </div>
+
+        <!-- Create / append / remove -->
+        <div class="demo-cell">
+            <h2>Create &amp; Append (C4, A8)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>create_element</code> <code>create_text_node</code><br/>
+                <code>append_child</code> <code>remove_child</code>
+            </p>
+            <div id="create-container" class="api-box api-box-tall"/>
+            <div class="btn-row">
+                <button id="create-add-btn">Add item</button>
+                <button id="create-remove-btn">Remove last</button>
+            </div>
+            <p>Count: <span id="create-count" class="live-val">0</span></p>
+        </div>
+    </div>
+
+    <div class="demo-row">
+        <!-- Context queries -->
+        <div class="demo-cell">
+            <h2>Context queries (B1, B2)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>is_mouse_interacting()</code><br/>
+                <code>get_hover_element()</code> <code>get_focus_element()</code><br/>
+                <code>get_element_at_point()</code>
+            </p>
+            <p>Mouse interacting: <span id="ctx-interacting" class="live-val">--</span></p>
+            <p>Hover element id: <span id="ctx-hover" class="live-val">--</span></p>
+            <p>Focus element id: <span id="ctx-focus" class="live-val">--</span></p>
+            <input type="text" id="ctx-focus-input" placeholder="Click to focus…" class="ctx-input"/>
+        </div>
+
+        <!-- Scroll + load_from_memory -->
+        <div class="demo-cell">
+            <h2>Scroll &amp; load_from_memory (A5, B3)</h2>
+            <p style="font-size: 14dp; color: #b8c8d8;">
+                <code>scroll_into_view()</code><br/>
+                <code>load_document_from_memory()</code><br/>
+                <code>get_num_documents()</code>
+            </p>
+            <div id="scroll-box" class="scroll-demo">
+                <p id="scroll-top">TOP — scroll target is below ↓</p>
+                <div style="height: 200dp;"/>
+                <p id="scroll-target" class="scroll-target">↑ Scroll target ↑</p>
+            </div>
+            <div class="btn-row">
+                <button id="scroll-to-btn">Scroll to target</button>
+                <button id="scroll-top-btn">Scroll to top</button>
+            </div>
+            <p>Docs loaded: <span id="ctx-numdocs" class="live-val">--</span> <span style="font-size:13dp; color:#888;">(incl. debugger)</span></p>
+        </div>
+    </div>
+</panel>
+
+</tabset><!-- end tabs -->
+</body>
+</rml>

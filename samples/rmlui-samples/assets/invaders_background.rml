@@ -1,0 +1,29 @@
+<rml>
+	<head>
+		<style>
+			body
+			{
+				width: 100%;
+				height: 100%;
+				z-index: -1;
+				/*
+					Upstream layered a background.tga image plus a custom "starfield"
+					decorator (DecoratorStarfield) animating parallax stars.  The custom
+					decorator cannot be registered from Python, so the starfield is
+					substituted with a static vertical gradient (a standard decorator).
+				*/
+				decorator: vertical-gradient( #05060f #0a0c1f );
+			}
+
+			#rifm_logo
+			{
+				position: absolute;
+				left: 25dp;
+				top: 25dp;
+			}
+		</style>
+	</head>
+	<body id="logo">
+		<img id="rifm_logo" src="logo.tga" />
+	</body>
+</rml>

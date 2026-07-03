@@ -1,0 +1,491 @@
+/*
+ * rpgui.rcss  — RPGUI skin ported to RmlUi RCSS
+ * Images sourced from https://github.com/RonenNess/RPGUI (MIT)
+ */
+
+/* ── Sprite sheets ───────────────────────────────────────────────── */
+
+/* Standard frame: 36×36, 6px corners */
+@spritesheet frame-sheet {
+    src: border-image.png;
+    resolution: 1x;
+    f-tl:  0px   0px  6px  6px;
+    f-tc:  6px   0px 24px  6px;
+    f-tr: 30px   0px  6px  6px;
+    f-ml:  0px   6px  6px 24px;
+    f-mc:  6px   6px 24px 24px;
+    f-mr: 30px   6px  6px 24px;
+    f-bl:  0px  30px  6px  6px;
+    f-bc:  6px  30px 24px  6px;
+    f-br: 30px  30px  6px  6px;
+}
+
+/* Golden frame: 36×36, 4px corners */
+@spritesheet frame-golden-sheet {
+    src: border-image-golden.png;
+    resolution: 1x;
+    fg-tl:  0px   0px  4px  4px;
+    fg-tc:  4px   0px 28px  4px;
+    fg-tr: 32px   0px  4px  4px;
+    fg-ml:  0px   4px  4px 28px;
+    fg-mc:  4px   4px 28px 28px;
+    fg-mr: 32px   4px  4px 28px;
+    fg-bl:  0px  32px  4px  4px;
+    fg-bc:  4px  32px 28px  4px;
+    fg-br: 32px  32px  4px  4px;
+}
+
+/* Golden-2 frame: 64×64, 8px corners */
+@spritesheet frame-golden2-sheet {
+    src: border-image-golden2.png;
+    resolution: 1x;
+    fg2-tl:  0px   0px  8px  8px;
+    fg2-tc:  8px   0px 48px  8px;
+    fg2-tr: 56px   0px  8px  8px;
+    fg2-ml:  0px   8px  8px 48px;
+    fg2-mc:  8px   8px 48px 48px;
+    fg2-mr: 56px   8px  8px 48px;
+    fg2-bl:  0px  56px  8px  8px;
+    fg2-bc:  8px  56px 48px  8px;
+    fg2-br: 56px  56px  8px  8px;
+}
+
+/* Grey frame: 36×36, 3px corners */
+@spritesheet frame-grey-sheet {
+    src: border-image-grey.png;
+    resolution: 1x;
+    fgr-tl:  0px   0px  3px  3px;
+    fgr-tc:  3px   0px 30px  3px;
+    fgr-tr: 33px   0px  3px  3px;
+    fgr-ml:  0px   3px  3px 30px;
+    fgr-mc:  3px   3px 30px 30px;
+    fgr-mr: 33px   3px  3px 30px;
+    fgr-bl:  0px  33px  3px  3px;
+    fgr-bc:  3px  33px 30px  3px;
+    fgr-br: 33px  33px  3px  3px;
+}
+
+/* Background fills (16×16 / 36×36 tiles, tiled) */
+@spritesheet bg-sheet     { src: background-image.png;        resolution: 1x; bg:       0px 0px 16px 16px; }
+@spritesheet bg-g-sheet   { src: background-image-golden.png; resolution: 1x; bg-g:     0px 0px 16px 16px; }
+@spritesheet bg-g2-sheet  { src: background-image-golden2.png;resolution: 1x; bg-g2:    0px 0px 36px 36px; }
+@spritesheet bg-gr-sheet  { src: background-image-grey.png;   resolution: 1x; bg-gr:    0px 0px 32px 32px; }
+@spritesheet bg-sel-sheet { src: select-background-image.png; resolution: 1x; bg-sel:   0px 0px 16px 16px; }
+
+/* Button sprites */
+@spritesheet btn-sheet     { src: button.png;              resolution: 1x; btn:    0px 0px 76px 26px; }
+@spritesheet btn-hov-sheet { src: button-hover.png;        resolution: 1x; btn-hov:0px 0px 76px 26px; }
+@spritesheet btn-dwn-sheet { src: button-down.png;         resolution: 1x; btn-dwn:0px 0px 76px 26px; }
+@spritesheet btn-g-sheet   { src: button-golden.png;       resolution: 1x; btn-g:  0px 0px 74px 24px; }
+@spritesheet btn-gh-sheet  { src: button-golden-hover.png; resolution: 1x; btn-gh: 0px 0px 74px 24px; }
+@spritesheet btn-gd-sheet  { src: button-golden-down.png;  resolution: 1x; btn-gd: 0px 0px 74px 24px; }
+@spritesheet btn-gl-sheet  { src: button-golden-left.png;  resolution: 1x; btn-gl: 0px 0px 12px 22px; }
+@spritesheet btn-gr-sheet  { src: button-golden-right.png; resolution: 1x; btn-gr: 0px 0px 12px 22px; }
+
+/* Progress bar: left/right caps 10×14, track 12×14, fill 6×8 */
+@spritesheet pb-left-sh  { src: progress-bar-left.png;  resolution: 1x; pb-left:  0px 0px 10px 14px; }
+@spritesheet pb-right-sh { src: progress-bar-right.png; resolution: 1x; pb-right: 0px 0px 10px 14px; }
+@spritesheet pb-track-sh { src: progress-bar-track.png; resolution: 1x; pb-track: 0px 0px 12px 14px; }
+@spritesheet pb-fill-sh  { src: progress.png;           resolution: 1x; pb-fill:  0px 0px  6px  8px; }
+@spritesheet pb-red-sh   { src: progress-red.png;       resolution: 1x; pb-red:   0px 0px  6px  8px; }
+@spritesheet pb-blue-sh  { src: progress-blue.png;      resolution: 1x; pb-blue:  0px 0px  6px  8px; }
+@spritesheet pb-green-sh { src: progress-green.png;     resolution: 1x; pb-green: 0px 0px  6px  8px; }
+
+/* HR: hr 16×3, hr-golden 62×5 */
+@spritesheet hr-sh   { src: hr.png;        resolution: 1x; hr:   0px 0px 16px 3px; }
+@spritesheet hr-g-sh { src: hr-golden.png; resolution: 1x; hr-g: 0px 0px 62px 5px; }
+
+/* Checkbox / radio */
+@spritesheet chk-off-sh   { src: checkbox-off.png;        resolution: 1x; chk-off:   0px 0px 10px 10px; }
+@spritesheet chk-on-sh    { src: checkbox-on.png;         resolution: 1x; chk-on:    0px 0px 10px 10px; }
+@spritesheet chk-goff-sh  { src: checkbox-golden-off.png; resolution: 1x; chk-goff:  0px 0px 13px 13px; }
+@spritesheet chk-gon-sh   { src: checkbox-golden-on.png;  resolution: 1x; chk-gon:   0px 0px 13px 13px; }
+@spritesheet rad-off-sh   { src: radio-off.png;           resolution: 1x; rad-off:   0px 0px  8px  8px; }
+@spritesheet rad-on-sh    { src: radio-on.png;            resolution: 1x; rad-on:    0px 0px  8px  8px; }
+@spritesheet rad-goff-sh  { src: radio-golden-off.png;    resolution: 1x; rad-goff:  0px 0px 13px 13px; }
+@spritesheet rad-gon-sh   { src: radio-golden-on.png;     resolution: 1x; rad-gon:   0px 0px 13px 13px; }
+
+/* Select / dropdown border: 36×36, 3px corners */
+@spritesheet sel-bdr-sh {
+    src: select-border-image.png;
+    resolution: 1x;
+    sb-tl:  0px  0px  3px  3px;
+    sb-tc:  3px  0px 30px  3px;
+    sb-tr: 33px  0px  3px  3px;
+    sb-ml:  0px  3px  3px 30px;
+    sb-mc:  3px  3px 30px 30px;
+    sb-mr: 33px  3px  3px 30px;
+    sb-bl:  0px 33px  3px  3px;
+    sb-bc:  3px 33px 30px  3px;
+    sb-br: 33px 33px  3px  3px;
+}
+
+/* Slider: left 5×8, right 5×8, track 24×8, thumb 5×10 */
+@spritesheet sl-left-sh  { src: slider-left.png;  resolution: 1x; sl-left:  0px 0px  5px  8px; }
+@spritesheet sl-right-sh { src: slider-right.png; resolution: 1x; sl-right: 0px 0px  5px  8px; }
+@spritesheet sl-track-sh { src: slider-track.png; resolution: 1x; sl-track: 0px 0px 24px  8px; }
+@spritesheet sl-thumb-sh { src: slider-thumb.png; resolution: 1x; sl-thumb: 0px 0px  5px 10px; }
+
+/* Golden slider */
+@spritesheet sl-g-left-sh  { src: slider-left-golden.png;  resolution: 1x; sl-g-left:  0px 0px 12px 12px; }
+@spritesheet sl-g-right-sh { src: slider-right-golden.png; resolution: 1x; sl-g-right: 0px 0px 12px 12px; }
+@spritesheet sl-g-track-sh { src: slider-track-golden.png; resolution: 1x; sl-g-track: 0px 0px 22px 12px; }
+@spritesheet sl-g-thumb-sh { src: slider-thumb-golden.png; resolution: 1x; sl-g-thumb: 0px 0px  5px 10px; }
+
+/* Scrollbar */
+@spritesheet sb-track-sh  { src: scrollbar-track.png;  resolution: 1x; sb-track:  0px 0px 12px 22px; }
+@spritesheet sb-thumb-sh  { src: scrollbar-thumb.png;  resolution: 1x; sb-thumb:  0px 0px 10px 10px; }
+@spritesheet sb-button-sh { src: scrollbar-button.png; resolution: 1x; sb-button: 0px 0px 12px 12px; }
+
+/* Icons */
+@spritesheet ic-sword      { src: icons/sword.png;        resolution: 1x; ic-sword:      0px 0px 12px 12px; }
+@spritesheet ic-shield     { src: icons/shield.png;       resolution: 1x; ic-shield:     0px 0px 12px 12px; }
+@spritesheet ic-excl       { src: icons/exclamation.png;  resolution: 1x; ic-excl:       0px 0px 12px 12px; }
+@spritesheet ic-pot-red    { src: icons/potion-red.png;   resolution: 1x; ic-pot-red:    0px 0px 12px 12px; }
+@spritesheet ic-pot-green  { src: icons/potion-green.png; resolution: 1x; ic-pot-green:  0px 0px 12px 12px; }
+@spritesheet ic-pot-blue   { src: icons/potion-blue.png;  resolution: 1x; ic-pot-blue:   0px 0px 12px 12px; }
+@spritesheet ic-wpn-slot   { src: icons/weapon-slot.png;  resolution: 1x; ic-wpn-slot:   0px 0px 16px 16px; }
+@spritesheet ic-shd-slot   { src: icons/shield-slot.png;  resolution: 1x; ic-shd-slot:   0px 0px 16px 16px; }
+@spritesheet ic-arm-slot   { src: icons/armor-slot.png;   resolution: 1x; ic-arm-slot:   0px 0px 16px 16px; }
+@spritesheet ic-helm-slot  { src: icons/helmet-slot.png;  resolution: 1x; ic-helm-slot:  0px 0px 16px 16px; }
+@spritesheet ic-ring-slot  { src: icons/ring-slot.png;    resolution: 1x; ic-ring-slot:  0px 0px 16px 16px; }
+@spritesheet ic-pot-slot   { src: icons/potion-slot.png;  resolution: 1x; ic-pot-slot:   0px 0px 16px 16px; }
+@spritesheet ic-mag-slot   { src: icons/magic-slot.png;   resolution: 1x; ic-mag-slot:   0px 0px 16px 16px; }
+@spritesheet ic-shoe-slot  { src: icons/shoes-slot.png;   resolution: 1x; ic-shoe-slot:  0px 0px 16px 16px; }
+@spritesheet ic-empty-slot { src: icons/empty-slot.png;   resolution: 1x; ic-empty-slot: 0px 0px 16px 16px; }
+
+/* ── Body ────────────────────────────────────────────────────────── */
+
+body {
+    font-family: "Press Start 2P";
+    font-size: 8dp;
+    color: #ffffff;
+    cursor: default;
+}
+
+input[type=text], textarea           { cursor: select; }
+.rpgui-button, .rpgui-radio,
+.rpgui-checkbox, select, a,
+input[type=range]                    { cursor: point; }
+
+/* ── Containers ──────────────────────────────────────────────────── */
+
+.rpgui-container {
+    position: absolute;
+    display: block;
+    box-sizing: border-box;
+    padding: 18dp;
+}
+
+.framed {
+    decorator: tiled-box(f-tl, f-tc, f-tr, f-ml, f-mc, f-mr, f-bl, f-bc, f-br), image(background-image.png repeat);
+}
+
+.framed-golden {
+    decorator: tiled-box(fg-tl, fg-tc, fg-tr, fg-ml, fg-mc, fg-mr, fg-bl, fg-bc, fg-br), image(background-image-golden.png repeat);
+}
+
+.framed-golden-2 {
+    decorator: tiled-box(fg2-tl, fg2-tc, fg2-tr, fg2-ml, fg2-mc, fg2-mr, fg2-bl, fg2-bc, fg2-br), image(background-image-golden2.png repeat);
+}
+
+.framed-grey {
+    padding: 10dp;
+    decorator: tiled-box(fgr-tl, fgr-tc, fgr-tr, fgr-ml, fgr-mc, fgr-mr, fgr-bl, fgr-bc, fgr-br), image(background-image-grey.png repeat);
+}
+
+/* ── Typography ──────────────────────────────────────────────────── */
+
+h1, h2 {
+    color: #ffffff;
+    text-align: center;
+    margin: 7dp 7dp 14dp 7dp;
+    font-weight: bold;
+}
+
+h1 { font-size: 9dp; }
+h2 { font-size: 10dp; }
+
+p, span { color: #ffffff; font-size: 8dp; line-height: 14dp; }
+label   { color: #ffffff; font-size: 8dp; line-height: 14dp; display: inline; }
+a       { color: #ffff00; font-size: 8dp; line-height: 14dp; display: inline; text-decoration: underline; }
+
+hr {
+    display: block;
+    height: 10dp;
+    border-width: 0dp;
+    margin: 6dp 0dp;
+    decorator: image(hr.png repeat-x);
+}
+hr.golden { decorator: image(hr-golden.png repeat-x); }
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+
+.rpgui-button {
+    display: block;
+    width: 100%;
+    height: 34dp;
+    border-width: 0dp;
+    margin: 6dp 0dp;
+    padding: 0dp;
+    color: #ffffff;
+    font-size: 8dp;
+    text-align: center;
+    line-height: 34dp;
+    decorator: image(btn fill);
+    cursor: point;
+}
+
+.rpgui-button:hover  { decorator: image(btn-hov fill); }
+.rpgui-button:active { decorator: image(btn-dwn fill); }
+
+.rpgui-button.golden {
+    height: 36dp;
+    line-height: 36dp;
+    padding: 0dp 0dp;
+    margin-left: 0dp;
+    margin-right: 0dp;
+    decorator: tiled-horizontal(btn-gl, btn-g, btn-gr);
+}
+.rpgui-button.golden:hover  { decorator: tiled-horizontal(btn-gl, btn-gh, btn-gr); }
+.rpgui-button.golden:active { decorator: tiled-horizontal(btn-gl, btn-gd, btn-gr); }
+
+/* ── Text inputs ─────────────────────────────────────────────────── */
+
+input.text, input[type=text], textarea {
+    background-color: #4e4a4e;
+    color: #ffffff;
+    font-size: 8dp;
+    line-height: 24dp;
+    width: 100%;
+    min-height: 24dp;
+    padding: 2dp 8dp 2dp 10dp;
+    box-sizing: border-box;
+    border-width: 1dp;
+    border-color: #888;
+    margin: 3dp 0dp 6dp 0dp;
+}
+
+textarea {
+    height: 64dp;
+    line-height: 16dp;
+    padding-top: 5dp;
+}
+
+/* ── Select / dropdown ───────────────────────────────────────────── */
+
+select {
+    color: #ffffff;
+    font-size: 8dp;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4dp 7dp;
+    decorator: tiled-box(sb-tl, sb-tc, sb-tr, sb-ml, sb-mc, sb-mr, sb-bl, sb-bc, sb-br), image(select-background-image.png repeat);
+    margin: 3dp 0dp 6dp 0dp;
+    overflow: auto;
+}
+
+/* List box variant — add class="rpgui-list" for fixed height + scrollbar */
+select.rpgui-list {
+    height: 100dp;
+}
+
+/* ── Scrollbar (for select lists) ────────────────────────────────── */
+
+scrollbarvertical {
+    width: 18dp;
+    margin-left: 2dp;
+}
+
+scrollbarvertical slidertrack {
+    decorator: image(scrollbar-track.png repeat-y);
+}
+
+scrollbarvertical sliderbar {
+    width: 14dp;
+    min-height: 14dp;
+    margin-left: 2dp;
+    decorator: image(sb-thumb fill);
+}
+
+scrollbarvertical sliderarrowdec,
+scrollbarvertical sliderarrowinc {
+    width: 18dp;
+    height: 18dp;
+    decorator: image(sb-button fill);
+}
+
+/* ── Progress bars ───────────────────────────────────────────────── */
+
+.rpgui-progress {
+    display: block;
+    height: 42dp;
+    width: 100%;
+    margin: 5dp 0dp;
+    position: relative;
+}
+
+.rpgui-progress-left-edge {
+    position: absolute;
+    left: 0dp;
+    top: 0dp;
+    width: 40dp;
+    height: 42dp;
+    decorator: image(pb-left fill);
+}
+
+.rpgui-progress-right-edge {
+    position: absolute;
+    right: 0dp;
+    top: 0dp;
+    width: 40dp;
+    height: 42dp;
+    decorator: image(pb-right fill);
+}
+
+.rpgui-progress-track {
+    position: absolute;
+    left: 40dp;
+    right: 40dp;
+    top: 0dp;
+    height: 42dp;
+    decorator: image(progress-bar-track.png fill);
+}
+
+.rpgui-progress-fill {
+    position: absolute;
+    left: 0dp;
+    top: 9dp;
+    bottom: 8dp;
+    width: 80%;
+    decorator: image(progress.png fill);
+}
+
+.rpgui-progress-fill.red   { decorator: image(progress-red.png   fill); }
+.rpgui-progress-fill.blue  { decorator: image(progress-blue.png  fill); }
+.rpgui-progress-fill.green { decorator: image(progress-green.png fill); }
+
+/* ── Sliders ─────────────────────────────────────────────────────── */
+
+input[type=range] {
+    display: block;
+    width: 100%;
+    height: 20dp;
+    margin: 12dp 0dp;
+    padding: 0dp;
+    border-width: 0dp;
+}
+
+input[type=range] sliderarrowdec {
+    width: 14dp;
+    height: 20dp;
+    decorator: image(sl-left fill);
+}
+input[type=range] sliderarrowinc {
+    width: 14dp;
+    height: 20dp;
+    decorator: image(sl-right fill);
+}
+
+input[type=range] slidertrack {
+    height: 20dp;
+    decorator: image(slider-track.png repeat-x);
+}
+
+input[type=range] sliderbar {
+    width: 14dp;
+    height: 20dp;
+    decorator: image(sl-thumb fill);
+}
+
+input[type=range].golden sliderarrowdec { decorator: image(sl-g-left  fill); }
+input[type=range].golden sliderarrowinc { decorator: image(sl-g-right fill); }
+input[type=range].golden slidertrack    { decorator: image(slider-track-golden.png repeat-x); }
+input[type=range].golden sliderbar      { decorator: image(sl-g-thumb fill); }
+
+/* ── Checkboxes ──────────────────────────────────────────────────── */
+
+.rpgui-checkbox {
+    display: inline-block;
+    width: 24dp;
+    height: 24dp;
+    margin: 8dp 6dp 8dp 0dp;
+    decorator: image(chk-off fill);
+    cursor: point;
+    vertical-align: middle;
+}
+
+.rpgui-checkbox.checked        { decorator: image(chk-on   fill); }
+.rpgui-checkbox.golden         { decorator: image(chk-goff fill); }
+.rpgui-checkbox.golden.checked { decorator: image(chk-gon  fill); }
+
+/* ── Radio buttons ───────────────────────────────────────────────── */
+
+.rpgui-radio {
+    display: inline-block;
+    width: 24dp;
+    height: 24dp;
+    margin: 6dp 6dp 6dp 0dp;
+    decorator: image(rad-off fill);
+    cursor: point;
+    vertical-align: middle;
+}
+
+.rpgui-radio.checked        { decorator: image(rad-on   fill); }
+.rpgui-radio.golden         { decorator: image(rad-goff fill); }
+.rpgui-radio.golden.checked { decorator: image(rad-gon  fill); }
+
+/* ── Icons ───────────────────────────────────────────────────────── */
+
+.rpgui-icon {
+    display: inline-block;
+    width: 64dp;
+    height: 64dp;
+    margin: 2dp;
+}
+
+.rpgui-icon.sword        { decorator: image(ic-sword      fill); }
+.rpgui-icon.shield       { decorator: image(ic-shield     fill); }
+.rpgui-icon.exclamation  { decorator: image(ic-excl       fill); }
+.rpgui-icon.potion-red   { decorator: image(ic-pot-red    fill); }
+.rpgui-icon.potion-green { decorator: image(ic-pot-green  fill); }
+.rpgui-icon.potion-blue  { decorator: image(ic-pot-blue   fill); }
+.rpgui-icon.weapon-slot  { decorator: image(ic-wpn-slot   fill); }
+.rpgui-icon.shield-slot  { decorator: image(ic-shd-slot   fill); }
+.rpgui-icon.armor-slot   { decorator: image(ic-arm-slot   fill); }
+.rpgui-icon.helmet-slot  { decorator: image(ic-helm-slot  fill); }
+.rpgui-icon.ring-slot    { decorator: image(ic-ring-slot  fill); }
+.rpgui-icon.potion-slot  { decorator: image(ic-pot-slot   fill); }
+.rpgui-icon.magic-slot   { decorator: image(ic-mag-slot   fill); }
+.rpgui-icon.shoes-slot   { decorator: image(ic-shoe-slot  fill); }
+.rpgui-icon.empty-slot   { decorator: image(ic-empty-slot fill); }
+
+/* ── Status box ──────────────────────────────────────────────────── */
+
+.status-box {
+    display: block;
+    background-color: rgba(0, 0, 0, 89);
+    border-width: 1dp;
+    border-color: rgba(255, 255, 255, 38);
+    border-radius: 3dp;
+    padding: 6dp 10dp;
+    margin: 6dp 0dp;
+    font-size: 12dp;
+    color: #adf;
+}
+
+/* ── Draggable panel ──────────────────────────────────────────────── */
+
+#drag-panel {
+    position: absolute;
+    left: 550dp;
+    top: 460dp;
+    width: 240dp;
+    drag: drag;
+    cursor: move;
+    z-index: 10;
+}
+
+#drag-panel h1 {
+    cursor: move;
+}

@@ -1,0 +1,253 @@
+<rml>
+<head>
+    <title>RPGUI Demo</title>
+    <link type="text/rcss" href="rpgui.rcss"/>
+    <style>
+        body {
+            width: 1280dp;
+            height: 800dp;
+            overflow: hidden;
+            background-color: #223;
+        }
+
+        /* Each panel is an absolute-positioned framed container */
+        .panel {
+            position: absolute;
+            top: 10dp;
+        }
+        .p1 { left:   10dp; width: 260dp; }
+        .p2 { left:  280dp; width: 260dp; }
+        .p3 { left:  550dp; width: 260dp; }
+        .p4 { left:  820dp; width: 260dp; }
+        .p5 { left:   10dp; top: 460dp; width: 260dp; }
+        .p6 { left:  280dp; top: 560dp; }
+        .p7 { left:  820dp; top: 560dp; width: 440dp; }
+
+        .row { display: block; margin: 5dp 0dp; }
+        .row label { display: inline-block; width: 90dp; }
+
+        .inline { display: inline-block; margin-right: 6dp; }
+        .block  { display: block; margin: 4dp 0dp; }
+    </style>
+</head>
+<body>
+
+<!-- ── Panel 1: Inputs ─────────────────────────────────────────── -->
+<div class="panel p1 rpgui-container framed">
+    <h1>Inputs</h1>
+    <hr />
+
+    <label>Hero name:</label>
+    <input type="text" id="inp-name" value="Bob" />
+
+    <label>Last name:</label>
+    <input type="text" id="inp-lastname" value="The Destroyer" />
+
+    <label>Bio:</label>
+    <textarea id="inp-bio">Bob The Destroyer likes to destroy stuff.</textarea>
+
+    <p>Here is a paragraph.</p>
+    <label>Golden hr:</label>
+    <hr class="golden" />
+    <a href="#">And this is a link.</a>
+</div>
+
+<!-- ── Panel 2: Buttons, Radio, Checkbox ───────────────────────── -->
+<div class="panel p2 rpgui-container framed">
+    <h1>Buttons</h1>
+    <hr />
+
+    <button id="btn-normal" class="rpgui-button">Button</button>
+    <button id="btn-golden" class="rpgui-button golden">Gold Button</button>
+
+    <h1>Radio / Check</h1>
+    <hr />
+
+    <label>Gender:</label>
+    <div class="block">
+        <div id="radio-male" class="rpgui-radio checked inline"></div>
+        <label>Male</label>
+    </div>
+    <div class="block">
+        <div id="radio-female" class="rpgui-radio inline"></div>
+        <label>Female</label>
+    </div>
+
+    <hr />
+
+    <div class="block">
+        <div id="chk1" class="rpgui-checkbox checked inline"></div>
+        <label>Checkbox 1</label>
+    </div>
+    <div class="block">
+        <div id="chk2" class="rpgui-checkbox inline"></div>
+        <label>Checkbox 2</label>
+    </div>
+
+    <div id="btn-output" class="status-box" style="margin-top: 8dp;">Click a button</div>
+</div>
+
+<!-- ── Panel 3: Dropdown & List ────────────────────────────────── -->
+<div class="panel p3 rpgui-container framed">
+    <h1>Drop &amp; List</h1>
+    <hr />
+
+    <label>Class:</label>
+    <select id="class-select">
+        <option value="Warrior"  selected>Warrior</option>
+        <option value="Mage"            >Mage</option>
+        <option value="Rogue"           >Rogue</option>
+        <option value="Ranger"          >Ranger</option>
+    </select>
+
+    <hr />
+
+    <label>Profession:</label>
+    <select id="prof-select" class="rpgui-list" size="4">
+        <option value="Blacksmith">Blacksmith</option>
+        <option value="Merchant"  >Merchant</option>
+        <option value="City Guard">City Guard</option>
+        <option value="Alchemist" >Alchemist</option>
+        <option value="Explorer"  >Explorer</option>
+        <option value="Thug"      >Thug</option>
+        <option value="Mercenary" >Mercenary</option>
+        <option value="Royalty"   >Royalty</option>
+        <option value="Gladiator" >Gladiator</option>
+    </select>
+
+    <div class="rpgui-container framed-grey" style="width: 100%; height: 50dp; position: relative; left: 0dp; top: 0dp;">
+        <label>Grey frame inside.</label>
+    </div>
+</div>
+
+<!-- ── Panel 4: Icons ──────────────────────────────────────────── -->
+<div class="panel p4 rpgui-container framed">
+    <h1>Icons</h1>
+    <hr />
+
+    <div class="rpgui-icon sword"></div>
+    <div class="rpgui-icon shield"></div>
+    <div class="rpgui-icon exclamation"></div>
+
+    <div style="display: block; height: 6dp;"></div>
+
+    <div class="rpgui-icon potion-red"></div>
+    <div class="rpgui-icon potion-green"></div>
+    <div class="rpgui-icon potion-blue"></div>
+
+    <div style="display: block; height: 6dp;"></div>
+
+    <div class="rpgui-icon weapon-slot"></div>
+    <div class="rpgui-icon shield-slot"></div>
+    <div class="rpgui-icon armor-slot"></div>
+
+    <div style="display: block; height: 6dp;"></div>
+
+    <div class="rpgui-icon helmet-slot"></div>
+    <div class="rpgui-icon ring-slot"></div>
+    <div class="rpgui-icon potion-slot"></div>
+
+    <div style="display: block; height: 6dp;"></div>
+
+    <div class="rpgui-icon magic-slot"></div>
+    <div class="rpgui-icon shoes-slot"></div>
+    <div class="rpgui-icon empty-slot"></div>
+</div>
+
+<!-- ── Panel 5: Sliders & Live Bars ────────────────────────────── -->
+<div class="panel p5 rpgui-container framed">
+    <h1>Sliders</h1>
+    <hr />
+
+    <label>Slider:</label>
+    <input type="range" id="slider-normal" min="0" max="10" value="8" style="width: 100%;"/>
+    <label>Golden slider:</label>
+    <input type="range" id="slider-golden" class="golden" min="1" max="5" value="3" style="width: 100%;"/>
+
+    <h1>Live Bars</h1>
+    <hr />
+
+    <label>HP:</label>
+    <div class="rpgui-progress">
+        <div class="rpgui-progress-left-edge"></div>
+        <div class="rpgui-progress-track">
+            <div id="hp-fill"     class="rpgui-progress-fill red"></div>
+        </div>
+        <div class="rpgui-progress-right-edge"></div>
+    </div>
+
+    <label>Mana:</label>
+    <div class="rpgui-progress">
+        <div class="rpgui-progress-left-edge"></div>
+        <div class="rpgui-progress-track">
+            <div id="mana-fill"   class="rpgui-progress-fill blue"></div>
+        </div>
+        <div class="rpgui-progress-right-edge"></div>
+    </div>
+
+    <label>Stamina:</label>
+    <div class="rpgui-progress">
+        <div class="rpgui-progress-left-edge"></div>
+        <div class="rpgui-progress-track">
+            <div id="stamina-fill" class="rpgui-progress-fill green"></div>
+        </div>
+        <div class="rpgui-progress-right-edge"></div>
+    </div>
+</div>
+
+<!-- ── Panel 6: Golden frames ──────────────────────────────────── -->
+<div class="rpgui-container framed-golden" style="position: absolute; left: 280dp; top: 560dp; width: 180dp; height: 180dp;">
+    <p>Golden frame.</p>
+</div>
+<div class="rpgui-container framed-golden-2" style="position: absolute; left: 470dp; top: 560dp; width: 180dp; height: 180dp;">
+    <p>Golden-2 frame.</p>
+</div>
+
+<!-- ── Panel 7: Live stats ─────────────────────────────────────── -->
+<div class="panel p7 rpgui-container framed">
+    <h1>Character Stats</h1>
+    <hr />
+
+    <div class="row">
+        <label>Name:</label>
+        <span id="stat-name">Bob The Destroyer</span>
+    </div>
+    <div class="row">
+        <label>Class:</label>
+        <span id="stat-class">Warrior</span>
+    </div>
+    <div class="row">
+        <label>HP:</label>
+        <span id="stat-hp">100 / 100</span>
+    </div>
+    <div class="row">
+        <label>Mana:</label>
+        <span id="stat-mana">80 / 100</span>
+    </div>
+    <div class="row">
+        <label>Stamina:</label>
+        <span id="stat-stamina">20 / 100</span>
+    </div>
+    <div class="row">
+        <label>Slider:</label>
+        <span id="stat-slider">8</span>
+    </div>
+
+    <hr />
+    <div id="stat-output" class="status-box">Interact with the controls above.</div>
+</div>
+
+<!-- ── Draggable Panel ────────────────────────────────────────────── -->
+<div id="drag-panel" class="rpgui-container framed">
+    <h1>Drag me!</h1>
+    <hr />
+    <p>This panel is draggable. Click and drag the title or body to move it.</p>
+    <p style="font-size: 11dp; color: #adf;">
+        CSS: <em>drag: drag</em><br/>
+        Python: <em>dragstart / drag events</em><br/>
+        + <em>get_absolute_offset()</em> + <em>set_property()</em>
+    </p>
+</div>
+
+</body>
+</rml>

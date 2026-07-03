@@ -1,0 +1,243 @@
+<rml>
+<head>
+    <link type="text/template" href="window.rml"/>
+    <title>Data Binding Sample</title>
+    <style>
+        body.window {
+            left: 40dp;
+            right: 40dp;
+            top: 55dp;
+            bottom: 20dp;
+            font-size: 17dp;
+            max-width: 2000dp;
+            max-height: 2000dp;
+        }
+        div#title_bar div#icon { display: none; }
+
+        div#window {
+            decorator: none;
+            background-color: rgba(12, 18, 32, 247);
+            border-width: 1dp;
+            border-color: rgba(80, 120, 220, 89);
+            border-radius: 6dp;
+        }
+
+        tabset { display: block; }
+        tabs {
+            display: block;
+            position: fixed;
+            clip: none;
+            text-align: right;
+            top: -47dp;
+            left: 205dp;
+            right: 10dp;
+        }
+        tab {
+            display: inline-block;
+            width: 120dp;
+            padding: 0 20dp;
+            line-height: 40dp;
+            font-size: 16dp;
+            color: #ddd;
+            text-align: center;
+            decorator: tiled-horizontal( tableheader-l, tableheader-c, tableheader-r );
+            image-color: #cffc;
+        }
+        tab:hover          { image-color: #fffe; color: #fff; }
+        tab:active,
+        tab:selected       { image-color: #fff;  color: #fff; }
+        panels { display: block; }
+        panel  { display: block; padding: 20dp 30dp; }
+
+        h1 { font-size: 20dp; font-weight: bold; margin: 0.8em 0 0.4em; color: #e8f4ff; }
+        p  { font-size: 17dp; color: #c8d8e8; margin-bottom: 0.6em; }
+        code { color: #7cf; }
+
+        .status {
+            display: block;
+            background: #2a3a2a;
+            border: 1dp #3a5a3a;
+            border-radius: 4dp;
+            padding: 10dp 14dp;
+            margin: 8dp 0;
+            font-size: 17dp;
+            color: #afa;
+        }
+        .todo {
+            display: block;
+            background: #3a2a1a;
+            border: 1dp #5a3a1a;
+            border-radius: 4dp;
+            padding: 10dp 14dp;
+            margin: 8dp 0;
+            font-size: 17dp;
+            color: #fb8;
+        }
+
+        /* Simulated data-binding UI (read-only display; wired by Python) */
+        .kv-row { display: block; margin: 5dp 0; }
+        .kv-key {
+            display: inline-block;
+            width: 120dp;
+            font-size: 17dp;
+            color: #b8cce0;
+        }
+        .kv-val {
+            display: inline-block;
+            font-size: 17dp;
+            color: #7cf;
+            font-weight: bold;
+        }
+        input.range { width: 280dp; vertical-align: middle; }
+
+        /* Tree-view panel */
+        .tree-node {
+            display: block;
+            padding: 3dp 0 3dp 20dp;
+            cursor: pointer;
+            color: #c8d8f0;
+            font-size: 17dp;
+        }
+        .tree-node:hover { color: #fff; }
+        .tree-node.expanded > .tree-children { display: block; }
+        .tree-children { display: none; padding-left: 16dp; }
+        .tree-icon { color: #7cf; margin-right: 4dp; }
+        .tree-icon.dir  { }
+        .tree-icon.file { color: #c0c8d0; }
+    </style>
+</head>
+<body template="window">
+<tabset id="tabs">
+
+<!-- ─── Basics ────────────────────────────────────────────────────── -->
+<tab>Basics</tab>
+<panel id="panel-basics">
+    <h1>Data Model Binding</h1>
+    <p>Variables are bound via <code>ctx.create_data_model("basics")</code> and
+    displayed using <code>data-model</code>, <code>{{ }}</code> text templates,
+    and <code>data-if</code> attributes.  Call <code>dm.dirty_variable(name)</code>
+    after changing the Python value to trigger re-evaluation.</p>
+
+    <div data-model="basics">
+        <div class="kv-row">
+            <span class="kv-key">animal:</span>
+            <span class="kv-val">{{ animal }}</span>
+        </div>
+        <div class="kv-row">
+            <span class="kv-key">show_text:</span>
+            <span class="kv-val">{{ show_text }}</span>
+        </div>
+        <div id="conditional-text" class="status" data-if="show_text">
+            The quick brown fox jumps over the lazy <span>{{ animal }}</span>.
+        </div>
+        <p data-if="!show_text" class="status" style="color: #f88;">Text hidden.</p>
+    </div>
+
+    <p>Change animal:</p>
+    <button id="btn-dog">Dog</button>
+    <button id="btn-cat">Cat</button>
+    <button id="btn-narwhal">Narwhal</button>
+    <button id="btn-toggle-text">Toggle text</button>
+</panel>
+
+<!-- ─── Events ────────────────────────────────────────────────────── -->
+<tab>Events</tab>
+<panel id="panel-events">
+    <h1>Event-driven updates</h1>
+    <p>Demonstrates event bridge: DOM events → Panda3D Messenger → Python handler
+    → DOM update.  This works today without DataModel.</p>
+
+    <p>Rating: <span id="rating-val" class="kv-val">50</span></p>
+    <input type="range" id="rating-slider" name="rating" min="0" max="100" step="1" value="50"/>
+
+    <div id="rating-feedback" class="status">Slide the range to change the rating.</div>
+
+    <h1>Mouse position tracker</h1>
+    <p>Click anywhere in the box below to record a position.</p>
+    <div id="mouse-box" style="
+        display: block;
+        width: 300dp; height: 80dp;
+        background: #334;
+        border: 1dp #556;
+        border-radius: 4dp;
+        margin: 6dp 0;
+        cursor: pointer;
+        text-align: center;
+        line-height: 80dp;
+        font-size: 12dp;
+        color: #8af;
+    ">Click me!</div>
+    <div id="mouse-positions" class="status">No positions recorded yet.</div>
+</panel>
+
+<!-- ─── data-for / bind_list ───────────────────────────────────────── -->
+<tab>data-for</tab>
+<panel id="panel-list">
+    <h1>List Binding — <code>bind_list</code> + <code>data-for</code></h1>
+    <p>Python registers a list getter with <code>dm.bind_list("items", getter)</code>.
+    RML renders each item with <code>data-for</code> and displays its value with
+    <code>{{ item }}</code>.  Call <code>dm.dirty_variable("items")</code> after
+    mutating the list to refresh the DOM.</p>
+
+    <div class="kv-row" style="margin-bottom: 6dp;">
+        <button id="btn-list-add">Add item</button>
+        <button id="btn-list-remove">Remove last</button>
+        <button id="btn-list-shuffle">Shuffle</button>
+    </div>
+
+    <div data-model="list-demo">
+        <p><span class="kv-key">Count:</span>
+           <span class="kv-val" id="list-count">{{ count }}</span></p>
+        <div id="list-items" style="
+            display: block;
+            background: #1a2030;
+            border: 1dp #3a4860;
+            border-radius: 4dp;
+            padding: 8dp 14dp;
+            margin: 6dp 0;
+            min-height: 40dp;
+        ">
+            <div data-for="item : items" style="
+                display: block;
+                padding: 3dp 0;
+                color: #9cf;
+                font-size: 17dp;
+            ">{{ item }}</div>
+        </div>
+    </div>
+
+    <h1 style="margin-top: 18dp;">Expandable Tree (set_class)</h1>
+    <p>Static tree with Python-toggled expand/collapse via
+    <code>set_class("expanded", …)</code> — no DataModel required.</p>
+
+    <div id="tree-root">
+        <div class="tree-node expanded" id="node-src">
+            <span class="tree-icon dir">▶</span>src/
+            <div class="tree-children">
+                <div class="tree-node" id="node-rmlui">
+                    <span class="tree-icon dir">▶</span>rmlui/
+                    <div class="tree-children">
+                        <div class="tree-node"><span class="tree-icon file">·</span>rmlRegion.cxx</div>
+                        <div class="tree-node"><span class="tree-icon file">·</span>rmlRenderInterface.cxx</div>
+                        <div class="tree-node"><span class="tree-icon file">·</span>rmlElement.cxx</div>
+                        <div class="tree-node"><span class="tree-icon file">·</span>rmlInputHandler.cxx</div>
+                    </div>
+                </div>
+                <div class="tree-node"><span class="tree-icon file">·</span>config_rmlui.cxx</div>
+            </div>
+        </div>
+        <div class="tree-node" id="node-samples">
+            <span class="tree-icon dir">▶</span>samples/
+            <div class="tree-children">
+                <div class="tree-node"><span class="tree-icon file">·</span>01_features.py</div>
+                <div class="tree-node"><span class="tree-icon file">·</span>02_benchmark.py</div>
+                <div class="tree-node"><span class="tree-icon file">·</span>03_data_binding.py</div>
+                <div class="tree-node"><span class="tree-icon file">·</span>04_rpgui_demo.py</div>
+            </div>
+        </div>
+    </div>
+</panel>
+
+</tabset>
+</body>
+</rml>

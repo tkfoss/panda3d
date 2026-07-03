@@ -1,0 +1,108 @@
+<rml>
+	<head>
+		<title>game</title>
+		<link type="text/rcss" href="rml.rcss"/>
+		<link type="text/rcss" href="invader.rcss"/>
+		<style>
+			body
+			{
+				padding: 0dp;
+				margin: 0dp;
+				width: 100%;
+				height: 100%;
+			}
+
+			/*
+				Upstream rendered the playfield with a custom <game> element
+				(C++ ElementGame, drives the Defender/Invader/Shield sprites) on top
+				of a custom "starfield" decorator (DecoratorStarfield).  Neither the
+				custom element instancer nor the custom decorator can be registered
+				from Python, so this screen is a static placeholder:
+				  - the HUD bar uses only standard image()/tiled-horizontal()
+				    decorators (which work) and is faithful to the original;
+				  - the starfield is substituted with a plain dark background-color
+				    (a standard image/gradient decorator could be used instead);
+				  - the actual gameplay (defender, invaders, bullets, shields) is
+				    not ported because it lives entirely in the custom C++ element.
+			*/
+			game
+			{
+				display: block;
+				width: 100%;
+				height: 100%;
+				background-color: #05060f;
+			}
+
+			div.hud
+			{
+				position: relative;
+				height: 43dp;
+				padding: 12dp 0 0 72dp;
+				margin: 0 20dp;
+				font-size: 20dp;
+				decorator: tiled-horizontal( huditem-l, huditem-c, huditem-r );
+			}
+
+			div#score_div { float: left;  width: 155dp; }
+			div#hiscore_div { float: left;  width: 205dp; }
+			div#waves_div { float: right; width: 95dp; }
+			div#lives_div { float: right; width: 80dp; }
+
+			icon
+			{
+				display: block;
+				position: absolute;
+				left: 14dp;
+				top: 3dp;
+				width: 51dp;
+				height: 39dp;
+			}
+
+			div#score_div icon   { decorator: image( icon-score );   }
+			div#hiscore_div icon { decorator: image( icon-hiscore ); }
+			div#waves_div icon   { decorator: image( icon-waves );   }
+			div#lives_div icon   { decorator: image( icon-lives );   }
+
+			p.placeholder
+			{
+				text-align: center;
+				margin-top: 180dp;
+				font-size: 22dp;
+				color: #8af;
+				font-effect: glow(2dp #08f);
+			}
+			p.placeholder span { color: #fff; }
+			p.hint
+			{
+				text-align: center;
+				color: #889;
+				font-size: 15dp;
+			}
+		</style>
+	</head>
+	<body id="game_window">
+		<game id="game">
+			<div id="score_div" class="hud">
+				<icon />
+				score: <span id="score">0</span>
+			</div>
+			<div id="hiscore_div" class="hud">
+				<icon />
+				high score: <span id="hiscore">0</span>
+			</div>
+			<div id="lives_div" class="hud">
+				<icon />
+				lives: <span id="lives">3</span>
+			</div>
+			<div id="waves_div" class="hud">
+				<icon />
+				wave: <span id="waves">1</span>
+			</div>
+			<p class="placeholder">
+				DEFENDER <span id="ship_colour">X-42</span> READY<br/>
+				DIFFICULTY: <span id="difficulty">EASY</span>
+			</p>
+			<p class="hint">(gameplay lives in a custom C++ element — see comments)<br/>Press Escape to return to the menu, demo auto-submits a score.</p>
+		</game>
+	</body>
+</rml>
