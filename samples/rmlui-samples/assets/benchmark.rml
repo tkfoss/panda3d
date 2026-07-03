@@ -1,0 +1,78 @@
+<rml>
+<head>
+    <link type="text/template" href="window.rml"/>
+    <title>Benchmark Sample</title>
+    <style>
+        body.window {
+            left: 60dp;
+            right: 60dp;
+            top: 40dp;
+            bottom: 40dp;
+            max-width: 2000dp;
+            max-height: 2000dp;
+        }
+        div#title_bar div#icon { display: none; }
+
+        #fps {
+            position: absolute;
+            top: 55dp;
+            left: 20dp;
+            font-size: 0.85em;
+            text-align: left;
+        }
+
+        #stats {
+            display: block;
+            margin: 60dp 20dp 10dp;
+            font-size: 13dp;
+            color: #ccc;
+        }
+        #stats span { color: #7cf; }
+
+        .box {
+            display: inline-block;
+            width: 60dp;
+            height: 60dp;
+            margin: 3dp;
+            border-radius: 6dp;
+            background: #335;
+            border: 1dp #557;
+            text-align: center;
+            line-height: 60dp;
+            font-size: 12dp;
+            color: #adf;
+            cursor: pointer;
+        }
+        .box:hover { background: #557; image-color: #ff8; }
+        .box.lit   { background: #a53; border-color: #f75; color: #fec; }
+
+        #grid { display: block; margin: 10dp 20dp; }
+
+        #controls {
+            display: block;
+            margin: 10dp 20dp;
+        }
+        button {
+            margin-right: 8dp;
+        }
+    </style>
+</head>
+<body template="window">
+
+<div id="fps"/>
+<div id="stats">
+    Elements: <span id="el-count">0</span> ·
+    Lit: <span id="lit-count">0</span> ·
+    Frame: <span id="frame-count">0</span> ·
+    FPS: <span id="fps-val">0</span>
+</div>
+<div id="controls">
+    <button id="btn-add">Add 50</button>
+    <button id="btn-remove">Remove 50</button>
+    <button id="btn-clear">Clear</button>
+    <button id="btn-toggle">Toggle random</button>
+</div>
+<div id="grid"/>
+
+</body>
+</rml>

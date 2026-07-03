@@ -1,0 +1,79 @@
+<rml>
+<head>
+	<title>High Scores</title>
+	<link type="text/template" href="window.rml" />
+	<style>
+		body
+		{
+			width: 460dp;
+			height: 440dp;
+			margin: auto;
+		}
+
+		div#title_bar div#icon
+		{
+			decorator: image( icon-hiscore );
+		}
+		defender
+		{
+			display: inline-block;
+			width: 64dp;
+			height: 16dp;
+			/*
+				Upstream drew the little ship with a custom C++ "defender" decorator
+				(DecoratorDefender) that animates the sprite.  That decorator cannot
+				be registered from Python, so it is substituted with a static image
+				of the same ship sprite.
+			*/
+			decorator: image( high_scores_defender.tga );
+		}
+		table {
+			margin-top: 5dp;
+			height: 345dp;
+		}
+		tbody tr {
+			height: 30dp;
+		}
+		tbody td
+		{
+			padding-top: 5dp;
+			height: 30dp;
+			white-space: nowrap;
+			overflow: hidden;
+			/*
+				bind_list only accepts flat scalar lists (no nested structs), so the
+				four upstream columns (Pilot/Ship/Wave/Score) are pre-formatted into a
+				single padded monospace string per row, bound as one list and rendered
+				with a single data-for.  A monospace font keeps the columns aligned.
+			*/
+			font-family: "Roboto Mono";
+			text-align: left;
+			color: black;
+		}
+		button {
+			margin-top: 20dp;
+		}
+		p.empty {
+			margin-top: 40dp;
+			text-align: center;
+		}
+	</style>
+</head>
+<body template="window">
+	<defender/>
+	<table data-model="high_scores">
+		<thead>
+			<tr>
+				<td style="font-family: &quot;Roboto Mono&quot;;">  Pilot          Wave   Score</td>
+			</tr>
+		</thead>
+		<tbody>
+			<tr data-for="row : rows">
+				<td>{{ row }}</td>
+			</tr>
+		</tbody>
+	</table>
+	<p class="empty" data-model="high_scores" data-if="count == 0"><em>No scores recorded. Play a game!</em></p>
+	<button id="btn_back">Main Menu</button>
+</body>
+</rml>
