@@ -55,6 +55,10 @@ class CocoaGraphicsWindow;
 
 - (void) scrollWheel: (NSEvent *) event;
 
+// Drag-and-drop (files dropped onto the window).
+- (NSDragOperation) draggingEntered: (id <NSDraggingInfo>) sender;
+- (BOOL) performDragOperation: (id <NSDraggingInfo>) sender;
+
 - (BOOL) isOpaque;
 
 @end

@@ -258,15 +258,19 @@ analyze_renderstate(ShaderKey &key, const RenderState *rs) {
   }
 
   // Decide what to send to the framebuffer alpha, if anything.
-  if (key._outputs & AuxBitplaneAttrib::ABO_glow) {
-    if (have_alpha_blend) {
-      key._outputs &= ~AuxBitplaneAttrib::ABO_glow;
-      key._disable_alpha_write = true;
-    } else if (have_alpha_test) {
-      // Subsume the alpha test in our shader.
-      key._alpha_test_mode = alpha_test->get_mode();
-      key._alpha_test_ref = alpha_test->get_reference_alpha();
-    }
+  if ((key._outputs & AuxBitplaneAttrib::ABO_glow) && have_alpha_blend) {
+    key._outputs &= ~AuxBitplaneAttrib::ABO_glow;
+    key._disable_alpha_write = true;
+  }
+  if (have_alpha_test) {
+    // Subsume the alpha test into the generated shader (a discard).  The
+    // fixed-function alpha test does not exist on core-profile OpenGL or
+    // GLES, so relying on it there silently no-ops — most visibly breaking
+    // M_dual transparency, whose opaque pass depends on the alpha test.
+    // F_subsume_alpha_test keeps a compat-profile context from applying
+    // the fixed-function test on top.
+    key._alpha_test_mode = alpha_test->get_mode();
+    key._alpha_test_ref = alpha_test->get_reference_alpha();
   }
 
   if (have_alpha_blend || have_alpha_test) {
