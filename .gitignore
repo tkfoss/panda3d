@@ -73,3 +73,5 @@ __pycache__/
 /.settings/
 /.cproject
 /.project
+build-min/*
+build/*

@@ -72,6 +72,7 @@ public:
   void handle_mouse_button_event(int button, bool down);
   void handle_mouse_moved_event(bool in_window, double x, double y, bool absolute);
   void handle_wheel_event(double x, double y);
+  void handle_drop_file(const std::string &path);
   virtual ButtonMap *get_keyboard_map() const;
 
   INLINE NSWindow *get_nswindow() const;

@@ -33,6 +33,10 @@
   }
   _graphicsWindow = window;
 
+  // Accept files dragged from the Finder (delivered as "drop-file" events).
+  [self registerForDraggedTypes:
+    [NSArray arrayWithObject:NSPasteboardTypeFileURL]];
+
   return self;
 }
 
@@ -159,6 +163,33 @@
 
 - (void) scrollWheel: (NSEvent *) event {
   _graphicsWindow->handle_wheel_event([event deltaX], [event deltaY]);
+}
+
+- (NSDragOperation) draggingEntered: (id <NSDraggingInfo>) sender {
+  NSPasteboard *pboard = [sender draggingPasteboard];
+  if ([[pboard types] containsObject:NSPasteboardTypeFileURL]) {
+    return NSDragOperationCopy;
+  }
+  return NSDragOperationNone;
+}
+
+- (BOOL) performDragOperation: (id <NSDraggingInfo>) sender {
+  NSPasteboard *pboard = [sender draggingPasteboard];
+  NSDictionary *options = [NSDictionary
+    dictionaryWithObject:[NSNumber numberWithBool:YES]
+                  forKey:NSPasteboardURLReadingFileURLsOnlyKey];
+  NSArray *urls = [pboard readObjectsForClasses:
+    [NSArray arrayWithObject:[NSURL class]] options:options];
+  if (urls == nil || [urls count] == 0) {
+    return NO;
+  }
+  for (NSURL *url in urls) {
+    const char *path = [[url path] UTF8String];
+    if (path != nullptr) {
+      _graphicsWindow->handle_drop_file(std::string(path));
+    }
+  }
+  return YES;
 }
 
 - (BOOL) isOpaque {

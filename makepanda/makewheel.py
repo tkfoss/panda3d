@@ -522,8 +522,15 @@ class WheelFile(object):
 
                     subprocess.call(["install_name_tool", "-change", dep, new_dep, temp.name])
 
-                # Make sure it has an ad-hoc code signature.
-                subprocess.call(["codesign", "-f", "-s", "-", temp.name])
+                # Make sure it has an ad-hoc code signature -- except for the
+                # deploy stubs.  build_apps inserts the frozen app into their
+                # __PANDA segment and slides __LINKEDIT, but FreezeTool does not
+                # fix up an existing LC_CODE_SIGNATURE (its dataoff is left
+                # pointing inside the inserted blob), producing a malformed,
+                # unsignable, unlaunchable binary.  Leaving the stub unsigned
+                # here lets build_apps sign the final frozen executable cleanly.
+                if os.path.basename(target_path) not in ('deploy-stub', 'deploy-stubw'):
+                    subprocess.call(["codesign", "-f", "-s", "-", temp.name])
             else:
                 # On other unixes, we just add dependencies normally.
                 for dep in deps:

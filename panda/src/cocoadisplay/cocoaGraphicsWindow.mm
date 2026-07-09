@@ -1928,6 +1928,21 @@ handle_wheel_event(double x, double y) {
 }
 
 /**
+ * Called by CocoaPandaView when a file is dragged and dropped onto the
+ * window.  Queues one global "drop-file" event per file, carrying this
+ * window and the dropped file's POSIX path — the same contract the other
+ * windowing backends can implement for their native drag-and-drop.
+ */
+void CocoaGraphicsWindow::
+handle_drop_file(const std::string &path) {
+  if (cocoadisplay_cat.is_debug()) {
+    cocoadisplay_cat.debug()
+      << "File dropped on window: " << path << "\n";
+  }
+  throw_event("drop-file", EventParameter(this), EventParameter(path));
+}
+
+/**
  * Returns a ButtonMap containing the association between raw buttons and
  * virtual buttons.
  */
