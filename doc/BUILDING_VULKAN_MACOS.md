@@ -36,11 +36,64 @@ PYTHONUNBUFFERED=1 \
 python3.13 main.py        # your app; remember to set `load-display p3vulkandisplay`
 ```
 
+### Adding the RmlUi (HTML/CSS UI) integration
+
+This branch adds the `panda3d.rmlui` module (`panda/src/rmlui/`). It is an optional
+package; enable it with `--use-rmlui` and point makepanda at an RmlUi install.
+
+Build & install RmlUi first (any recent RmlUi 6.x; built as a shared lib):
+
+```bash
+git clone https://github.com/mikke89/RmlUi <rmlui-src>
+cmake -S <rmlui-src> -B <rmlui-src>/build \
+  -DCMAKE_INSTALL_PREFIX=<rmlui>/install -DBUILD_SHARED_LIBS=ON
+cmake --build <rmlui-src>/build --target install -j
+```
+
+That yields `<rmlui>/install/include/RmlUi` and `<rmlui>/install/lib/librmlui.dylib`
+(+ `librmlui_debugger.dylib`). Then add these flags to the `makepanda.py` invocation above:
+
+```bash
+  --use-rmlui \
+  --rmlui-incdir=<rmlui>/install/include \
+  --rmlui-libdir=<rmlui>/install/lib \
+```
+
+makepanda auto-detects RmlUi via `SmartPkgEnable("RMLUI", ...)` looking for
+`RmlUi/Core/Core.h`; the incdir/libdir flags make detection explicit. The RmlUi
+visual debugger overlay (`HAVE_RMLUI_DEBUGGER`) is only wired up in the CMake build;
+makepanda links the core library only.
+
+At runtime, `librmlui.dylib` must be resolvable — add the RmlUi lib dir to the
+dynamic loader path alongside `built/lib`:
+
+```bash
+DYLD_FALLBACK_LIBRARY_PATH=<panda3d>/built/lib:<rmlui>/install/lib \
+PYTHONPATH=<panda3d>/built \
+VK_ICD_FILENAMES=/opt/homebrew/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json \
+python3.13 samples/rmlui-samples/<sample>.py    # set `load-display p3vulkandisplay`
+```
+
+Note on shaders: the RmlUi render interface (`rmlRenderInterface.cxx`) emits
+`#version 150` GLSL via `Shader::make(SL_GLSL, ...)`. The shaderpipeline's glslang
+frontend special-cases `#version 150` and cross-compiles it to SPIR-V, so the
+embedded shaders build unchanged on the Vulkan backend. If an RmlUi sample renders
+blank/white on Vulkan, the first suspects are the mid-frame render-target switches in
+layer compositing (offscreen `GraphicsBuffer` pool), CSS-filter multi-pass shaders,
+and stencil clip masks — see `rmlRegion.cxx` / `rmlRenderInterface.cxx`.
+
 Shader-pipeline tests:
 
 ```bash
 PYTHONPATH=<panda3d>/built python3.13 -m pytest \
   tests/shaderpipeline tests/gobj/test_shader.py -q
+```
+
+RmlUi tests (headless):
+
+```bash
+DYLD_FALLBACK_LIBRARY_PATH=<panda3d>/built/lib:<rmlui>/install/lib \
+PYTHONPATH=<panda3d>/built python3.13 -m pytest tests/rmlui -q
 ```
 
 Validation layer: off by default (the `vk-validate` config var). The backend now
