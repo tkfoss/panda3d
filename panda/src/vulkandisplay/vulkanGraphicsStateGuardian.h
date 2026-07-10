@@ -24,6 +24,7 @@
 #include "completionToken.h"
 
 class DrawableRegion;
+class ScissorAttrib;
 class VulkanBufferContext;
 class VulkanGraphicsPipe;
 class VulkanIndexBufferContext;
@@ -188,6 +189,7 @@ private:
   bool do_draw_primitive(const GeomPrimitivePipelineReader *reader, bool force);
 
   void do_issue_depth_range(const DepthOffsetAttrib *target_depth_offset);
+  void do_issue_scissor(const ScissorAttrib *target_scissor);
 
   static void fill_viewport(VkViewport &viewport, int x, int y, int w, int h,
                             PN_stdfloat min_depth, PN_stdfloat max_depth,
@@ -389,6 +391,10 @@ private:
 
   // Current depth range as applied by DepthOffsetAttrib
   CPT(DepthOffsetAttrib) _current_depth_range_attrib;
+
+  // Current scissor override as applied by ScissorAttrib (nullptr = the plain
+  // display-region scissor set in prepare_display_region).
+  CPT(ScissorAttrib) _current_scissor_attrib;
 
   // Static "null" vertex buffer if nullDescriptor is not supported.
   VkBuffer _null_vertex_buffer = VK_NULL_HANDLE;

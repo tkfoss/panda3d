@@ -28,6 +28,7 @@
 #include "colorWriteAttrib.h"
 #include "cullFaceAttrib.h"
 #include "depthOffsetAttrib.h"
+#include "scissorAttrib.h"
 #include "depthTestAttrib.h"
 #include "depthWriteAttrib.h"
 #include "lightAttrib.h"
@@ -3231,6 +3232,14 @@ set_state_and_transform(const RenderState *state,
     do_issue_depth_range(target_depth_offset);
   }
 
+  // A ScissorAttrib overrides the display-region scissor for subsequent draws
+  // (e.g. RmlUi clip rectangles).  Re-issue vkCmdSetScissor when it changes.
+  const ScissorAttrib *target_scissor;
+  state->get_attrib(target_scissor);
+  if (target_scissor != _current_scissor_attrib) {
+    do_issue_scissor(target_scissor);
+  }
+
   // Update uniforms.
   //TODO: properly compute altered field.
   uint32_t num_offsets = 0;
@@ -3422,6 +3431,10 @@ prepare_display_region(DisplayRegionPipelineReader *dr) {
   vkCmdSetScissor(_render_cmd, 0, count, &_viewports[0]);
 
   _current_depth_range_attrib.clear();
+
+  // The plain display-region scissor is now in effect; forget any prior
+  // ScissorAttrib override so it is re-applied by the next draw that needs it.
+  _current_scissor_attrib.clear();
 }
 
 /**
@@ -5324,6 +5337,66 @@ do_issue_depth_range(const DepthOffsetAttrib *target_depth_offset) {
   }
 
   vkCmdSetViewport(_render_cmd, 0, count, viewports);
+}
+
+/**
+ * Applies a ScissorAttrib override (e.g. an RmlUi clip rectangle), or reverts
+ * to the plain display-region scissor when the attrib is off/null.  The attrib
+ * frame is in [0,1] relative to the display region, as LVecBase4(left, right,
+ * bottom, top) with a bottom-left (GL) origin; Vulkan's scissor is top-left, so
+ * the vertical axis is flipped here.  The result is clamped to each region's
+ * base scissor so an override can only ever shrink the visible area.
+ */
+void VulkanGraphicsStateGuardian::
+do_issue_scissor(const ScissorAttrib *target_scissor) {
+  if (target_scissor != nullptr && target_scissor->is_off()) {
+    target_scissor = nullptr;
+  }
+  if (_current_scissor_attrib == target_scissor) {
+    return;
+  }
+  _current_scissor_attrib = target_scissor;
+
+  size_t count = _viewports.size();
+  if (count == 0) {
+    return;
+  }
+
+  if (target_scissor == nullptr) {
+    // Revert to the display-region scissor established in prepare_display_region.
+    vkCmdSetScissor(_render_cmd, 0, (uint32_t)count, &_viewports[0]);
+    return;
+  }
+
+  const LVecBase4 &frame = target_scissor->get_frame();
+  VkRect2D *scissors = (VkRect2D *)alloca(sizeof(VkRect2D) * count);
+
+  for (size_t i = 0; i < count; ++i) {
+    const VkRect2D &base = _viewports[i];
+    // Frame is relative to the region; map into pixels and flip Y (top-left).
+    int left   = (int)(base.offset.x + base.extent.width  * frame[0] + 0.5f);
+    int right  = (int)(base.offset.x + base.extent.width  * frame[1] + 0.5f);
+    int top    = (int)(base.offset.y + base.extent.height * (1.0f - frame[3]) + 0.5f);
+    int bottom = (int)(base.offset.y + base.extent.height * (1.0f - frame[2]) + 0.5f);
+
+    // Clamp to the base region so an override can only shrink it (a scissor
+    // outside the render area is invalid in Vulkan).
+    int bx0 = base.offset.x;
+    int by0 = base.offset.y;
+    int bx1 = base.offset.x + (int)base.extent.width;
+    int by1 = base.offset.y + (int)base.extent.height;
+    left   = std::max(bx0, std::min(left, bx1));
+    right  = std::max(bx0, std::min(right, bx1));
+    top    = std::max(by0, std::min(top, by1));
+    bottom = std::max(by0, std::min(bottom, by1));
+
+    scissors[i].offset.x = left;
+    scissors[i].offset.y = top;
+    scissors[i].extent.width = (uint32_t)std::max(0, right - left);
+    scissors[i].extent.height = (uint32_t)std::max(0, bottom - top);
+  }
+
+  vkCmdSetScissor(_render_cmd, 0, (uint32_t)count, scissors);
 }
 
 /**
