@@ -1179,6 +1179,13 @@ if (COMPILER=="GCC"):
             LibName("ASSIMP", "-undefined dynamic_lookup")
         if not PkgSkip("VRPN"):
             LibName("VRPN", "-undefined dynamic_lookup")
+        if not PkgSkip("RMLUI"):
+            # libp3rmlui carries the Python data-model bridge (rmlPythonUtil.h),
+            # whose Python C-API symbols are resolved at load time by the
+            # interpreter, exactly as the .pyd modules do.  The framework-Python
+            # build exposes no link library for PYTHON, so allow the undefined
+            # Python symbols in this core dylib.
+            LibName("RMLUI", "-undefined dynamic_lookup")
 
     if GetTarget() == 'android':
         LibName("ALWAYS", '-llog')
@@ -4456,20 +4463,26 @@ if not PkgSkip("VISION"):
 if not PkgSkip("RMLUI"):
     # Note: the RmlUi visual debugger overlay is currently only wired up in
     # the CMake build (HAVE_RMLUI_DEBUGGER); makepanda links the core library.
-    OPTS=['DIR:panda/src/rmlui', 'BUILDING:PANDARMLUI', 'RMLUI']
+    # EXCEPTIONS: RmlUi's public headers (itlib flat_map) use `throw`, so this
+    #   target must not be built with -fno-exceptions.
+    # PYTHON: the composite sources include rmlPythonUtil.h -> py_panda.h ->
+    #   Python.h, matching the CMake build's HAVE_PYTHON link of PKG::PYTHON.
+    OPTS=['DIR:panda/src/rmlui', 'BUILDING:PANDARMLUI', 'RMLUI', 'EXCEPTIONS', 'PYTHON']
     TargetAdd('p3rmlui_composite1.obj', opts=OPTS, input='p3rmlui_composite1.cxx')
 
     TargetAdd('libp3rmlui.dll', input='p3rmlui_composite1.obj')
     TargetAdd('libp3rmlui.dll', input=COMMON_PANDA_LIBS)
     TargetAdd('libp3rmlui.dll', opts=OPTS)
 
-    OPTS=['DIR:panda/src/rmlui', 'RMLUI']
+    OPTS=['DIR:panda/src/rmlui', 'RMLUI', 'EXCEPTIONS', 'PYTHON']
+    # Only interrogate the headers carrying PUBLISHED: declarations, matching
+    # panda/src/rmlui/CMakeLists.txt.  The .cxx bodies (and the interface adapter
+    # files) transitively include RmlUi implementation headers such as itlib
+    # flat_map.hpp that the CPPPARSER cannot resolve; none of them hold any
+    # PUBLISHED: blocks, so nothing published is lost by omitting them.
     IGATEFILES=GetDirectoryContents('panda/src/rmlui', ["config_rmlui.h",
-        "config_rmlui.cxx", "rmlInputHandler.h", "rmlInputHandler.cxx",
-        "rmlRegion.h", "rmlRegion.I", "rmlRegion.cxx",
-        "rmlContext.h", "rmlContext.cxx", "rmlDocument.h", "rmlDocument.cxx",
-        "rmlElement.h", "rmlElement.cxx", "rmlEvent.h", "rmlEvent.cxx",
-        "rmlDataModel.h", "rmlDataModel.cxx"])
+        "rmlInputHandler.h", "rmlRegion.h", "rmlContext.h", "rmlDocument.h",
+        "rmlElement.h", "rmlEvent.h", "rmlDataModel.h"])
     TargetAdd('libp3rmlui.in', opts=OPTS, input=IGATEFILES)
     TargetAdd('libp3rmlui.in', opts=['IMOD:panda3d.rmlui', 'ILIB:libp3rmlui', 'SRCDIR:panda/src/rmlui'])
 
@@ -4480,7 +4493,9 @@ if not PkgSkip("RMLUI"):
     PyTargetAdd('rmlui.pyd', input='rmlui_module.obj')
     PyTargetAdd('rmlui.pyd', input='libp3rmlui_igate.obj')
     PyTargetAdd('rmlui.pyd', input='libp3rmlui.dll')
-    PyTargetAdd('rmlui.pyd', input='libp3interrogatedb.dll')
+    # Note: no libp3interrogatedb here -- like core.pyd, the Python-wrapper
+    # runtime is compiled into the module, and this build produces no separate
+    # libp3interrogatedb.dll to link against.
     PyTargetAdd('rmlui.pyd', input=COMMON_PANDA_LIBS)
     PyTargetAdd('rmlui.pyd', opts=['RMLUI'])
 
