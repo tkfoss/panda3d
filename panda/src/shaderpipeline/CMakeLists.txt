@@ -4,7 +4,9 @@ set(P3SHADERPIPELINE_HEADERS
   shaderCompilerGlslPreProc.h
   shaderModuleGlsl.h
   shaderModuleSpirV.h shaderModuleSpirV.I
+  spirVConvertBoolToIntPass.h
   spirVDebugOutputPass.h spirVDebugOutputPass.I
+  spirVEmulateTextureQueriesPass.h
   spirVFlattenStructPass.h
   spirVHoistStructResourcesPass.h
   spirVInjectAlphaTestPass.h
@@ -23,6 +25,7 @@ set(P3SHADERPIPELINE_SOURCES
   shaderCompilerGlslPreProc.cxx
   shaderModuleGlsl.cxx
   shaderModuleSpirV.cxx
+  spirVConvertBoolToIntPass.cxx
   spirVEmulateTextureQueriesPass.cxx
   spirVDebugOutputPass.cxx
   spirVFlattenStructPass.cxx
