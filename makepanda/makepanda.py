@@ -1193,6 +1193,11 @@ if (COMPILER=="GCC"):
             # build exposes no link library for PYTHON, so allow the undefined
             # Python symbols in this core dylib.
             LibName("RMLUI", "-undefined dynamic_lookup")
+            # librmlui.dylib's install name is @rpath/librmlui.dylib, so anything
+            # linking it needs an rpath.  Point it at built/lib (where the lib is
+            # bundled below); @loader_path/../lib resolves there from both
+            # built/lib/libp3rmlui.dylib and built/panda3d/rmlui*.so.
+            LibName("RMLUI", "-Wl,-rpath,@loader_path/../lib")
 
     if GetTarget() == 'android':
         LibName("ALWAYS", '-llog')
@@ -3350,6 +3355,22 @@ if GetTarget() == 'darwin' and not PkgSkip("VULKAN") and "VULKAN" in SDK:
         oscmd('install_name_tool -id @loader_path/../lib/libvulkan.dylib ' + target)
         oscmd('codesign -f -s - ' + target)
         JustBuilt([target], [dylib])
+
+# Bundle librmlui.dylib into built/lib so the @rpath/librmlui.dylib reference in
+# libp3rmlui / rmlui.pyd resolves at runtime (the RMLUI rpath added above points
+# @rpath at built/lib).  Keep the @rpath install name so the consumers' existing
+# reference still matches; only copy + re-sign.  The visual debugger overlay lib
+# is bundled too when present, since the module is built to allow init_debugger().
+if GetTarget() == 'darwin' and not PkgSkip("RMLUI"):
+    rmlui_libdir = FindLibDirectory("RMLUI")
+    for libname in ("librmlui.dylib", "librmlui_debugger.dylib"):
+        src = os.path.realpath(os.path.join(rmlui_libdir, libname)) if rmlui_libdir else ""
+        if src and os.path.isfile(src):
+            target = os.path.join(GetOutputDir(), "lib", libname)
+            if NeedsBuild([target], [src]):
+                CopyFile(target, src)
+                oscmd('codesign -f -s - ' + target)
+                JustBuilt([target], [src])
 
 # Bundle a MoltenVK ICD manifest pointing at the bundled libMoltenVK.dylib, so
 # the bundled loader can discover the ICD without a Vulkan SDK install or a
