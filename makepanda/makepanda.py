@@ -901,6 +901,13 @@ if (COMPILER=="GCC"):
     SmartPkgEnable("TIFF",      "libtiff-4", ("tiff"), "tiff.h")
     SmartPkgEnable("VRPN",      "",          ("vrpn", "quat"), ("vrpn", "quat.h", "vrpn/vrpn_Types.h"))
     SmartPkgEnable("RMLUI",     "",          ("rmlui"), ("RmlUi/Core/Core.h", "RmlUi/Core/RenderManager.h"))
+    if not PkgSkip("RMLUI"):
+        # RmlUi is built with its custom (vtable-based) RTTI and exports
+        # RMLUI_CUSTOM_RTTI as a required INTERFACE_COMPILE_DEFINITION.  The
+        # macro changes the class layout (adds a virtual IsClass()), so p3rmlui
+        # MUST compile Traits.h with the same define -- otherwise rmlui_dynamic_cast
+        # resolves against a mismatched vtable and segfaults (e.g. in get_value()).
+        DefSymbol("RMLUI", "RMLUI_CUSTOM_RTTI")
     SmartPkgEnable("OPUS",      "opusfile",  ("opusfile", "opus", "ogg"), ("ogg/ogg.h", "opus/opusfile.h", "opus"))
     SmartPkgEnable("JPEG",      "",          ("jpeg"), "jpeglib.h")
     # glslang >= ~11 merges MachineIndependent/GenericCodeGen/OSDependent into a
