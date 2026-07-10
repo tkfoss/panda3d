@@ -957,3 +957,16 @@ package_option(SPIRV-Tools
   IMPORTED_AS SPIRV-Tools-static SPIRV-Tools-opt)
 
 package_status(SPIRV-Tools "spirv-tools")
+
+# Vulkan.  CMake ships a FindVulkan module that provides Vulkan::Vulkan (the
+# loader).  On macOS the loader is MoltenVK-backed and discovered at runtime via
+# the ICD (VK_ICD_FILENAMES); see makepanda for the runtime bundling that the
+# CMake build does not yet replicate.  The Vulkan backend also needs the
+# shaderpipeline (glslang + SPIRV-Tools), which are wired above.
+find_package(Vulkan QUIET)
+
+package_option(Vulkan
+  "Enable the experimental Vulkan rendering backend."
+  IMPORTED_AS Vulkan::Vulkan)
+
+package_status(Vulkan "Vulkan")

@@ -64,6 +64,9 @@ add_subdirectory(src/x11display)
 # Creates a metalib, so should go after
 add_subdirectory(src/tinydisplay)
 
+# Also creates a (loadable-module) metalib.
+add_subdirectory(src/vulkandisplay)
+
 # For other components
 # bullet
 add_subdirectory(src/bullet)
