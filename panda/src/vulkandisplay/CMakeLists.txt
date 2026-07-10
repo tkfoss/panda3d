@@ -1,13 +1,13 @@
-# EXPERIMENTAL / WORK IN PROGRESS.  This wires the Vulkan backend into the CMake
-# build (the makepanda build has always been the only way to build it).  With
-# -DHAVE_VULKAN=ON it configures and every source compiles, but the module does
-# not yet link: the shaderpipeline SpirV*Pass vtables it uses are consumed into
-# the "panda" metalib with hidden visibility, so they are not visible to this
-# module the way they are in the makepanda build (which exports them).  The
-# remaining work is to re-export those symbols from the panda metalib (or link
-# p3shaderpipeline here and resolve the resulting export-set conflict, since
-# p3shaderpipeline is exported under the Core component, not Vulkan).  Vulkan
-# defaults OFF, so this does not affect normal CMake builds.
+# EXPERIMENTAL.  Wires the Vulkan backend into the CMake build (previously it
+# could only be built via makepanda).  With -DHAVE_VULKAN=ON this configures,
+# compiles, and links p3vulkandisplay as a loadable display module (selectable
+# at runtime with `load-display p3vulkandisplay`).  Vulkan defaults OFF, so this
+# does not affect normal CMake builds.
+#
+# Not yet ported from makepanda: the macOS runtime bundling of libMoltenVK /
+# the Vulkan loader and the ICD manifest into the output tree.  On macOS the
+# loader is found via the linked -lvulkan and MoltenVK via VK_ICD_FILENAMES at
+# runtime, as with any external Vulkan install.
 if(NOT HAVE_VULKAN)
   return()
 endif()
